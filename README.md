@@ -9,6 +9,8 @@ DevToolbox/
 ├── README.md                    # 本文件
 ├── chrome-automation/           # Chrome 自动化工具
 │   └── start-chrome-with-profile.sh
+├── image-processing/            # 图像处理工具
+│   └── process_image.py
 ├── docs/                       # 文档集合
 │   └── Chrome_DevTools_WSL2_Setup_Guide.md
 └── configs/                    # 配置文件模板
@@ -35,6 +37,27 @@ DevToolbox/
 - **内容**: 完整的 Chrome DevTools + WSL2 配置指南
 - **包含**: 安装步骤、使用方法、故障排除、安全注意事项
 - **适用**: Claude Code MCP 集成、Web 自动化
+
+### 🖼️ 图像处理 (image-processing/)
+
+#### process_image.py
+- **功能**: 将图像分割为 3x3 网格
+- **特性**:
+  - 自动创建输出目录
+  - 生成预览拼图
+  - 支持 PNG 格式输出
+  - 显示处理进度和结果统计
+- **使用方法**:
+  ```python
+  from PIL import Image
+  import sys
+  sys.path.append('/home/ivan/DevToolbox/image-processing')
+  import process_image
+
+  img = Image.open('input.png')
+  process_image.split_image_to_grid(img, 'output_directory')
+  ```
+- **输出**: 9个网格片段 + 1个预览图
 
 ### ⚙️ 配置文件 (configs/)
 *待添加更多配置模板*
@@ -101,6 +124,7 @@ claude mcp install chrome-devtools-mcp@latest
 ## 扩展计划
 
 ### 计划添加的工具
+- [x] 图像处理工具
 - [ ] 数据库连接脚本
 - [ ] API 测试工具
 - [ ] 日志分析脚本
