@@ -243,29 +243,54 @@ start_monitoring() {
     done
 }
 
-# 停止监控
+# 停止监控（本小姐的简洁高效停止策略！）
 stop_monitoring() {
+    echo "🛑 正在停止sync_monitor.sh进程..."
+
+    # 优先通过PID文件停止（最准确的方式）
     if [ -f "$PID_FILE" ]; then
         local monitor_pid=$(cat "$PID_FILE" 2>/dev/null)
         if [ -n "$monitor_pid" ] && ps -p "$monitor_pid" > /dev/null 2>&1; then
-            echo "停止监控进程 (PID: $monitor_pid)..."
-            kill $monitor_pid
+            echo "通过PID文件停止监控进程 (PID: $monitor_pid)..."
+            kill $monitor_pid 2>/dev/null
             sleep 2
 
+            # 如果还在运行，强制停止
             if ps -p $monitor_pid > /dev/null 2>&1; then
-                echo "强制停止进程..."
-                kill -9 $monitor_pid
+                echo "强制停止监控进程..."
+                kill -9 $monitor_pid 2>/dev/null
             fi
 
             rm -f "$PID_FILE"
             echo "(￣▽￣*) 监控进程已停止！"
+            return 0
         else
-            echo "(￣_￣) 监控进程已经停止"
+            echo "(￣_￣) PID文件中的进程已不存在，清理PID文件"
             rm -f "$PID_FILE"
         fi
-    else
-        echo "(￣_￣) 没有找到正在运行的监控进程"
     fi
+
+    # 如果PID文件不存在或无效，搜索并停止相关进程
+    echo "🔍 搜索并停止运行中的sync_monitor.sh进程..."
+
+    local process_count=$(ps aux | grep "[s]ync_monitor.sh" | wc -l)
+    if [ "$process_count" -gt 0 ]; then
+        echo "发现 $process_count 个运行中的sync_monitor.sh进程，正在停止..."
+
+        # 停止所有相关进程
+        ps aux | grep "[s]ync_monitor.sh" | awk '{print $2}' | xargs -r kill 2>/dev/null
+        sleep 2
+
+        # 强制停止顽固进程
+        ps aux | grep "[s]ync_monitor.sh" | awk '{print $2}' | xargs -r kill -9 2>/dev/null
+
+        echo "✅ 已停止所有sync_monitor.sh进程"
+    else
+        echo "(￣_￣) 没有找到运行中的sync_monitor.sh进程"
+    fi
+
+    # 清理PID文件
+    rm -f "$PID_FILE"
 }
 
 # 查看监控状态

@@ -5,7 +5,7 @@
 # ============================================================================
 
 # 设置变量（这些配置对本小姐来说就像呼吸一样简单！）
-SOURCE_DIR="/vol02/1000-0-02ffe18d"
+SOURCE_DIR="/vol02/1000-0-ec87cc22"
 TARGET_DIR="/vol1/1000/Photos/"
 LOG_DIR="$HOME"
 PID_FILE="$HOME/sync.pid"
@@ -156,30 +156,54 @@ start_sync() {
     echo "└─────────────────────────────────────┘"
 }
 
-# 停止同步进程
+# 停止同步进程（本小姐的简洁高效停止策略！）
 stop_sync() {
+    echo "🛑 正在停止sync_all_in_one.sh进程..."
+
+    # 优先通过PID文件停止（最准确的方式）
     if [ -f "$PID_FILE" ]; then
-        PID=$(cat "$PID_FILE")
-        if ps -p $PID > /dev/null 2>&1; then
-            echo "停止同步进程 (PID: $PID)..."
-            kill $PID
+        PID=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$PID" ] && ps -p $PID > /dev/null 2>&1; then
+            echo "通过PID文件停止进程 (PID: $PID)..."
+            kill $PID 2>/dev/null
             sleep 2
 
-            # 如果进程还在，强制杀死
+            # 如果还在运行，强制停止
             if ps -p $PID > /dev/null 2>&1; then
                 echo "强制停止进程..."
-                kill -9 $PID
+                kill -9 $PID 2>/dev/null
             fi
 
             rm -f "$PID_FILE"
             echo "(￣▽￣*) 同步进程已停止！"
+            return 0
         else
-            echo "(￣_￣) 进程已经停止了"
+            echo "(￣_￣) PID文件中的进程已不存在，清理PID文件"
             rm -f "$PID_FILE"
         fi
-    else
-        echo "(￣_￣) 没有找到正在运行的同步进程"
     fi
+
+    # 如果PID文件不存在或无效，搜索并停止相关进程
+    echo "🔍 搜索并停止运行中的sync_all_in_one.sh进程..."
+
+    local process_count=$(ps aux | grep "[s]ync_all_in_one.sh" | wc -l)
+    if [ "$process_count" -gt 0 ]; then
+        echo "发现 $process_count 个运行中的sync_all_in_one.sh进程，正在停止..."
+
+        # 停止所有相关进程
+        ps aux | grep "[s]ync_all_in_one.sh" | awk '{print $2}' | xargs -r kill 2>/dev/null
+        sleep 2
+
+        # 强制停止顽固进程
+        ps aux | grep "[s]ync_all_in_one.sh" | awk '{print $2}' | xargs -r kill -9 2>/dev/null
+
+        echo "✅ 已停止所有sync_all_in_one.sh进程"
+    else
+        echo "(￣_￣) 没有找到运行中的sync_all_in_one.sh进程"
+    fi
+
+    # 清理PID文件
+    rm -f "$PID_FILE"
 }
 
 # 查看同步状态
