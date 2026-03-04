@@ -1,9 +1,10 @@
 # Ubuntu X11 Window Split Tools
 
-这个目录提供两个面向 Ubuntu GNOME X11 的窗口平铺脚本：
+这个目录提供三个面向 Ubuntu GNOME X11 的窗口平铺/聚焦脚本：
 
 - `split3.sh`: 将当前显示器上的窗口平铺为 1 到 3 列
 - `split6.sh`: 将当前显示器固定为 `3 列 x 2 行` 网格，并支持后台守护模式
+- `focus_split6_slot.sh`: 聚焦六分屏中的某个槽位，并把鼠标移动到该槽位中心
 
 适用于终端、浏览器、编辑器等普通顶层窗口，不依赖 GNOME Shell 扩展。
 
@@ -23,6 +24,13 @@
 - 支持一次性整理窗口，或使用守护进程自动补位
 - 支持 `--daemon`、`--status`、`--stop`、`--dry-run`、`--verbose`
 - 内部边界留有轻微重叠，用来遮住 GNOME 窗口阴影缝隙
+
+### focus_split6_slot.sh
+
+- 读取 `split6` 写入的状态文件
+- 按槽位号直接激活对应窗口
+- 同时把鼠标移动到目标槽位中心
+- 适合配合快捷键快速跳转六分屏中的某一格
 
 ## 依赖
 
@@ -54,7 +62,7 @@ sudo apt install -y xdotool x11-utils x11-xserver-utils
 
 ```bash
 cd /home/dgx/github/DevToolbox/spilt_screens
-chmod +x split3.sh split6.sh
+chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh
 ```
 
 直接运行：
@@ -76,6 +84,13 @@ chmod +x split3.sh split6.sh
 ```bash
 ./split3.sh --verbose
 ./split6.sh --verbose
+```
+
+查看槽位状态并聚焦：
+
+```bash
+./focus_split6_slot.sh --status
+./focus_split6_slot.sh 1
 ```
 
 ## split3.sh 用法
@@ -146,14 +161,73 @@ chmod +x split3.sh split6.sh
 - 状态文件：`~/.cache/split6/state.env`
 - 日志文件：`~/.cache/split6/daemon.log`
 
+## focus_split6_slot.sh 用法
+
+命令：
+
+```bash
+./focus_split6_slot.sh SLOT
+./focus_split6_slot.sh --status
+```
+
+槽位编号：
+
+```text
+1 2 3
+4 5 6
+```
+
+行为：
+
+- 读取 `~/.cache/split6/state.env`
+- 选择指定槽位中的窗口
+- 激活该窗口
+- 将鼠标移动到该槽位中心
+
+使用前提：
+
+- 先运行过一次 `./split6.sh`
+- 或运行 `./split6.sh --daemon`
+
+否则不会有可用的槽位状态文件。
+
+## GNOME 快捷键
+
+执行下面的脚本可写入或更新 GNOME 自定义快捷键：
+
+```bash
+./configure_split6_hotkeys.sh
+```
+
+默认快捷键：
+
+- `Ctrl+Alt+0`：执行一次六分屏整理
+- `Ctrl+Alt+Shift+6`：启动六分屏守护
+- `Ctrl+Alt+Shift+5`：停止六分屏守护
+- `Ctrl+Alt+1`：聚焦槽位 1
+- `Ctrl+Alt+2`：聚焦槽位 2
+- `Ctrl+Alt+3`：聚焦槽位 3
+- `Ctrl+Alt+4`：聚焦槽位 4
+- `Ctrl+Alt+5`：聚焦槽位 5
+- `Ctrl+Alt+6`：聚焦槽位 6
+- `Ctrl+Alt+7`：GNOME Terminal
+
+聚焦键按编号对应：
+
+```text
+1 2 3
+4 5 6
+```
+
 ## 安装到 PATH
 
-如果你希望直接使用 `split3` 和 `split6` 命令：
+如果你希望直接使用 `split3`、`split6` 和 `focus_split6_slot` 命令：
 
 ```bash
 mkdir -p ~/.local/bin
 ln -sf "$(pwd)/split3.sh" ~/.local/bin/split3
 ln -sf "$(pwd)/split6.sh" ~/.local/bin/split6
+ln -sf "$(pwd)/focus_split6_slot.sh" ~/.local/bin/focus_split6_slot
 ```
 
 确认 `~/.local/bin` 已在 `PATH` 中：
