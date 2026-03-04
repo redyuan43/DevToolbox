@@ -21,6 +21,10 @@ DevToolbox/
 │   └── ...                            # 其他配置和文档
 ├── chrome-automation/                  # 🌐 Chrome 自动化工具
 │   └── start-chrome-with-profile.sh
+├── spilt_screens/                      # 🪟 X11 窗口平铺脚本
+│   ├── split3.sh                      # 1-3 窗口横向平铺
+│   ├── split6.sh                      # 3x2 固定网格 + 守护模式
+│   └── README.md                      # 使用说明
 ├── image-processing/                   # 🖼️ 图像处理工具
 │   └── process_image.py
 ├── xiaomi_tts_project/                 # 🗣️ 小米音箱TTS系统
@@ -79,6 +83,26 @@ cd photo-sync-project
 - **使用方法**: `./start-chrome-with-profile.sh`
 - **端口**: 9222
 - **配置目录**: `C:\ChromeDebugProfile`
+
+### 🪟 窗口平铺工具 (spilt_screens/)
+
+#### split3.sh / split6.sh
+- **功能**: 在 Ubuntu GNOME X11 下按当前显示器自动平铺窗口
+- **适用场景**:
+  - 快速把 1-3 个常用窗口均分到当前屏幕
+  - 将当前工作区窗口固定到 `3 列 x 2 行` 网格
+  - 持续监听新窗口并补进空位
+- **主要特性**:
+  - 基于当前活动窗口自动锁定目标显示器
+  - 只处理当前工作区、当前显示器上的普通顶层窗口
+  - `split6.sh` 支持 `--daemon`、`--status`、`--stop`
+  - 自动考虑 `_NET_WORKAREA`，避开 GNOME 顶栏和 Dock 保留区域
+- **快速使用**:
+  ```bash
+  cd spilt_screens
+  ./split3.sh
+  ./split6.sh --daemon
+  ```
 
 ### 🗣️ 小米音箱 TTS 系统 (xiaomi_tts_project/)
 
@@ -222,6 +246,15 @@ cd photo-sync-project
    ./start-chrome-with-profile.sh
    ```
 
+### 🪟 窗口平铺工具
+
+```bash
+cd spilt_screens
+./split3.sh --dry-run
+./split6.sh
+./split6.sh --daemon
+```
+
 2. **验证连接**:
    ```bash
    curl -s http://localhost:9222/json/version
@@ -348,6 +381,7 @@ claude mcp install chrome-devtools-mcp@latest
 - ✅ 新增 **照片同步系统** (完整的一体化解决方案)
 - ✅ 新增 **小米音箱 TTS 系统** (WebSocket 语音播报)
 - ✅ 新增 **V2Ray Docker 配置** (完整代理解决方案)
+- ✅ 新增 **X11 窗口平铺脚本** (`split3.sh` / `split6.sh`)
 - 📝 重构根目录 README，完善项目文档
 - 🎨 统一项目风格和代码规范
 
