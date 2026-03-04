@@ -1,10 +1,11 @@
 # Ubuntu X11 Window Split Tools
 
-这个目录提供三个面向 Ubuntu GNOME X11 的窗口平铺/聚焦脚本：
+这个目录提供四个面向 Ubuntu GNOME X11 的窗口平铺/聚焦/配置脚本：
 
 - `split3.sh`: 将当前显示器上的窗口平铺为 1 到 3 列
 - `split6.sh`: 将当前显示器固定为 `3 列 x 2 行` 网格，并支持后台守护模式
 - `focus_split6_slot.sh`: 聚焦六分屏中的某个槽位，并把鼠标移动到该槽位中心
+- `export_split6_hotkeys.sh`: 导出当前 `split6` 相关 GNOME 快捷键备份
 
 适用于终端、浏览器、编辑器等普通顶层窗口，不依赖 GNOME Shell 扩展。
 
@@ -31,6 +32,12 @@
 - 按槽位号直接激活对应窗口
 - 同时把鼠标移动到目标槽位中心
 - 适合配合快捷键快速跳转六分屏中的某一格
+
+### export_split6_hotkeys.sh
+
+- 导出当前 `split6` 相关的 GNOME 快捷键
+- 同时导出 GNOME Terminal 当前快捷键
+- 默认输出到 `~/.cache/split6/hotkeys_backup.txt`
 
 ## 依赖
 
@@ -62,7 +69,7 @@ sudo apt install -y xdotool x11-utils x11-xserver-utils
 
 ```bash
 cd /home/dgx/github/DevToolbox/spilt_screens
-chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh
+chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh export_split6_hotkeys.sh
 ```
 
 直接运行：
@@ -91,6 +98,12 @@ chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh
 ```bash
 ./focus_split6_slot.sh --status
 ./focus_split6_slot.sh 1
+```
+
+导出当前快捷键备份：
+
+```bash
+./export_split6_hotkeys.sh
 ```
 
 ## split3.sh 用法
@@ -199,6 +212,31 @@ chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh
 ./configure_split6_hotkeys.sh
 ```
 
+导出当前快捷键和 Terminal 键位：
+
+```bash
+./export_split6_hotkeys.sh
+```
+
+默认导出文件：
+
+```bash
+~/.cache/split6/hotkeys_backup.txt
+```
+
+如需导出到指定文件：
+
+```bash
+./export_split6_hotkeys.sh /tmp/split6_hotkeys_backup.txt
+```
+
+如需查看当前系统值：
+
+```bash
+gsettings get org.gnome.settings-daemon.plugins.media-keys terminal
+gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings
+```
+
 默认快捷键：
 
 - `Ctrl+Alt+0`：执行一次六分屏整理
@@ -221,13 +259,14 @@ chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh
 
 ## 安装到 PATH
 
-如果你希望直接使用 `split3`、`split6` 和 `focus_split6_slot` 命令：
+如果你希望直接使用 `split3`、`split6`、`focus_split6_slot` 和 `export_split6_hotkeys` 命令：
 
 ```bash
 mkdir -p ~/.local/bin
 ln -sf "$(pwd)/split3.sh" ~/.local/bin/split3
 ln -sf "$(pwd)/split6.sh" ~/.local/bin/split6
 ln -sf "$(pwd)/focus_split6_slot.sh" ~/.local/bin/focus_split6_slot
+ln -sf "$(pwd)/export_split6_hotkeys.sh" ~/.local/bin/export_split6_hotkeys
 ```
 
 确认 `~/.local/bin` 已在 `PATH` 中：
