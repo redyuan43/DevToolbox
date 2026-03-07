@@ -5,21 +5,36 @@ set -euo pipefail
 SCRIPT_NAME="$(basename "$0")"
 DRY_RUN=0
 VERBOSE=0
+MODE="once"
 
 readonly EXIT_ENV=1
 readonly EXIT_NO_WINDOWS=2
 readonly EXIT_MOVE_FAILED=3
+readonly EXIT_STATE=4
 readonly XDO_SETTLE_DELAY="0.05"
+readonly DAEMON_POLL_INTERVAL="0.6"
+readonly SLOT_COUNT=12
+readonly GRID_COLS=4
+readonly GRID_ROWS=3
+readonly INNER_SEAM_OVERLAP_X=12
+readonly INNER_SEAM_OVERLAP_Y=12
+readonly STATE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/split16"
+readonly PID_FILE="${STATE_DIR}/daemon.pid"
+readonly STATE_FILE="${STATE_DIR}/state.env"
+readonly LOG_FILE="${STATE_DIR}/daemon.log"
 
 usage() {
   cat <<'EOF'
-Usage: split3.sh [--dry-run] [--verbose] [--help]
+Usage: split16.sh [--daemon|--status|--stop] [--dry-run] [--verbose] [--help]
 
-Tile the current monitor's windows into 1, 2, or 3 equal-width columns.
+Arrange windows into a fixed 4x3 grid on the current monitor's usable work area.
 
 Options:
-  --dry-run   Print the selected windows and target geometry without moving them
-  --verbose   Print filtering details while collecting candidate windows
+  --daemon    Start a background watcher that fills empty slots automatically
+  --status    Show daemon and slot status
+  --stop      Stop the running daemon
+  --dry-run   Print target slots without moving windows
+  --verbose   Print filtering and geometry details
   --help      Show this help text
 EOF
 }
@@ -50,6 +65,28 @@ require_cmd() {
 
 run_xdotool() {
   xdotool "$@" >/dev/null 2>&1
+}
+
+ensure_state_dir() {
+  mkdir -p "$STATE_DIR"
+}
+
+pid_is_running() {
+  local pid="$1"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1
+}
+
+get_running_daemon_pid() {
+  local pid
+  [[ -f "$PID_FILE" ]] || return 1
+  pid="$(<"$PID_FILE")"
+  if pid_is_running "$pid"; then
+    printf '%s\n' "$pid"
+    return 0
+  fi
+  rm -f "$PID_FILE"
+  return 1
 }
 
 hex_to_dec() {
@@ -136,7 +173,6 @@ get_window_geometry() {
 get_window_desktop() {
   local window_id="$1"
   local prop
-
   prop="$(xprop -id "$window_id" _NET_WM_DESKTOP 2>/dev/null || true)"
   printf '%s\n' "$prop" | sed -n 's/.*= \([-0-9]\+\).*/\1/p' | head -n1
 }
@@ -158,7 +194,6 @@ get_frame_extents() {
 
   prop="$(xprop -id "$window_id" _NET_FRAME_EXTENTS 2>/dev/null || true)"
   mapfile -t values < <(printf '%s\n' "$prop" | grep -oE -- '-?[0-9]+')
-
   if (( ${#values[@]} >= 4 )); then
     printf '%s %s %s %s\n' "${values[0]}" "${values[1]}" "${values[2]}" "${values[3]}"
   else
@@ -315,9 +350,14 @@ window_center_belongs_to_monitor() {
      center_y < monitor_y + monitor_h ))
 }
 
+window_exists() {
+  local window_id="$1"
+  xprop -id "$window_id" WM_CLASS >/dev/null 2>&1
+}
+
 window_is_candidate() {
   local window_id="$1"
-  local current_desktop="$2"
+  local desktop_id="$2"
   local monitor_x="$3"
   local monitor_y="$4"
   local monitor_w="$5"
@@ -340,13 +380,13 @@ window_is_candidate() {
     return 1
   fi
 
-  if (( w < 200 || h < 120 )); then
+  if (( w < 180 || h < 120 )); then
     debug "skip $window_id: too small (${w}x${h})"
     return 1
   fi
 
   window_desktop="$(get_window_desktop "$window_id")"
-  if [[ -n "$window_desktop" && "$window_desktop" != "$current_desktop" && "$window_desktop" != "-1" ]]; then
+  if [[ -n "$window_desktop" && "$window_desktop" != "$desktop_id" && "$window_desktop" != "-1" ]]; then
     debug "skip $window_id: desktop=$window_desktop"
     return 1
   fi
@@ -375,14 +415,13 @@ window_is_candidate() {
     return 1
   fi
 
-  debug "accept $window_id"
   return 0
 }
 
 get_stacking_order() {
   local prop
-  local -a ids=()
   local token
+  local -a ids=()
 
   prop="$(xprop -root _NET_CLIENT_LIST_STACKING 2>/dev/null || true)"
   while read -r token; do
@@ -394,7 +433,7 @@ get_stacking_order() {
   fi
 
   local i
-  for (( i=${#ids[@]}-1; i>=0; i-- )); do
+  for (( i=${#ids[@]} - 1; i >= 0; i-- )); do
     printf '%s\n' "${ids[$i]}"
   done
 }
@@ -404,17 +443,15 @@ pick_target_monitor() {
   local geometry
   local map_state x y w h
   local center_x center_y
-  local line
   local name monitor_x monitor_y monitor_w monitor_h
 
   geometry="$(get_window_geometry "$active_window_id")" || return 1
   read -r map_state x y w h <<<"$geometry"
-
   center_x=$(( x + (w / 2) ))
   center_y=$(( y + (h / 2) ))
 
-  while read -r line; do
-    read -r name monitor_x monitor_y monitor_w monitor_h <<<"$line"
+  while read -r name monitor_x monitor_y monitor_w monitor_h; do
+    [[ -n "$name" ]] || continue
     if (( center_x >= monitor_x &&
           center_x < monitor_x + monitor_w &&
           center_y >= monitor_y &&
@@ -428,15 +465,8 @@ pick_target_monitor() {
 }
 
 intersect_rects() {
-  local ax="$1"
-  local ay="$2"
-  local aw="$3"
-  local ah="$4"
-  local bx="$5"
-  local by="$6"
-  local bw="$7"
-  local bh="$8"
-
+  local ax="$1" ay="$2" aw="$3" ah="$4"
+  local bx="$5" by="$6" bw="$7" bh="$8"
   local left right top bottom
   local out_w out_h
 
@@ -444,7 +474,6 @@ intersect_rects() {
   top=$(( ay > by ? ay : by ))
   right=$(( (ax + aw) < (bx + bw) ? (ax + aw) : (bx + bw) ))
   bottom=$(( (ay + ah) < (by + bh) ? (ay + ah) : (by + bh) ))
-
   out_w=$(( right - left ))
   out_h=$(( bottom - top ))
 
@@ -454,7 +483,6 @@ intersect_rects() {
 
 prepare_window() {
   local window_id="$1"
-
   xprop -id "$window_id" -remove _NET_WM_STATE >/dev/null 2>&1 || true
   run_xdotool windowmap "$window_id" || true
   sleep "$XDO_SETTLE_DELAY"
@@ -469,20 +497,32 @@ move_window_outer() {
   local left right top bottom
   local outer_x outer_y outer_w outer_h
   local corrected_client_x corrected_client_y
+  local iteration delta_x delta_y
 
-  geometry="$(get_window_geometry "$window_id")" || return 1
-  extents="$(get_frame_extents "$window_id")"
-  outer="$(get_outer_geometry "$window_id")" || return 1
+  for iteration in 1 2 3 4 5 6; do
+    geometry="$(get_window_geometry "$window_id")" || return 1
+    extents="$(get_frame_extents "$window_id")"
+    outer="$(get_outer_geometry "$window_id")" || return 1
 
-  read -r map_state client_x client_y client_w client_h <<<"$geometry"
-  read -r left right top bottom <<<"$extents"
-  read -r outer_x outer_y outer_w outer_h <<<"$outer"
+    read -r map_state client_x client_y client_w client_h <<<"$geometry"
+    read -r left right top bottom <<<"$extents"
+    read -r outer_x outer_y outer_w outer_h <<<"$outer"
 
-  corrected_client_x=$(( client_x + (target_outer_x - outer_x) ))
-  corrected_client_y=$(( client_y + (target_outer_y - outer_y) ))
-  debug "move $window_id target_outer=(${target_outer_x},${target_outer_y}) client=(${corrected_client_x},${corrected_client_y})"
-  run_xdotool windowmove "$window_id" "$corrected_client_x" "$corrected_client_y"
-  sleep "$XDO_SETTLE_DELAY"
+    delta_x=$(( target_outer_x - outer_x ))
+    delta_y=$(( target_outer_y - outer_y ))
+    if (( delta_x == 0 && delta_y == 0 )); then
+      debug "move $window_id iter=$iteration actual_outer=(${outer_x},${outer_y}) delta=0x0"
+      return 0
+    fi
+
+    corrected_client_x=$(( client_x + delta_x ))
+    corrected_client_y=$(( client_y + delta_y ))
+    debug "move $window_id iter=$iteration target_outer=(${target_outer_x},${target_outer_y}) actual_outer=(${outer_x},${outer_y}) delta=${delta_x}x${delta_y} client=(${corrected_client_x},${corrected_client_y})"
+    run_xdotool windowmove "$window_id" "$corrected_client_x" "$corrected_client_y"
+    sleep "$XDO_SETTLE_DELAY"
+  done
+
+  return 0
 }
 
 resize_window_using_hints() {
@@ -574,6 +614,9 @@ resize_window_to_outer_size() {
   local outer
   local outer_x outer_y actual_outer_w actual_outer_h
   local iteration delta_w delta_h
+  local best_request_w best_request_h
+  local best_abs_delta=999999
+  local current_abs_delta
 
   extents="$(get_frame_extents "$window_id")"
   read -r left right top bottom <<<"$extents"
@@ -593,8 +636,10 @@ resize_window_to_outer_size() {
 
   requested_w=$(( target_outer_w - left - right ))
   requested_h=$(( target_outer_h - top - bottom ))
-  (( requested_w < 50 )) && requested_w=50
-  (( requested_h < 50 )) && requested_h=50
+  best_request_w="$requested_w"
+  best_request_h="$requested_h"
+  (( requested_w < 80 )) && requested_w=80
+  (( requested_h < 80 )) && requested_h=80
 
   for iteration in 1 2 3 4 5 6; do
     debug "resize $window_id iter=$iteration request_client=${requested_w}x${requested_h} target_outer=${target_outer_w}x${target_outer_h}"
@@ -602,10 +647,16 @@ resize_window_to_outer_size() {
     sleep "$XDO_SETTLE_DELAY"
     outer="$(get_outer_geometry "$window_id")" || return 1
     read -r outer_x outer_y actual_outer_w actual_outer_h <<<"$outer"
-    debug "resize $window_id iter=$iteration actual_outer=${actual_outer_w}x${actual_outer_h}"
-
     delta_w=$(( target_outer_w - actual_outer_w ))
     delta_h=$(( target_outer_h - actual_outer_h ))
+    current_abs_delta=$(( ${delta_w#-} + ${delta_h#-} ))
+    debug "resize $window_id iter=$iteration actual_outer=${actual_outer_w}x${actual_outer_h} delta=${delta_w}x${delta_h}"
+
+    if (( current_abs_delta < best_abs_delta )); then
+      best_abs_delta="$current_abs_delta"
+      best_request_w="$requested_w"
+      best_request_h="$requested_h"
+    fi
 
     if (( delta_w == 0 && delta_h == 0 )); then
       return 0
@@ -613,57 +664,416 @@ resize_window_to_outer_size() {
 
     requested_w=$(( requested_w + delta_w ))
     requested_h=$(( requested_h + delta_h ))
-    (( requested_w < 50 )) && requested_w=50
-    (( requested_h < 50 )) && requested_h=50
+    (( requested_w < 80 )) && requested_w=80
+    (( requested_h < 80 )) && requested_h=80
   done
+
+  if (( best_abs_delta < 999999 )); then
+    debug "resize $window_id settle best_request=${best_request_w}x${best_request_h}"
+    run_xdotool windowsize "$window_id" "$best_request_w" "$best_request_h"
+    sleep "$XDO_SETTLE_DELAY"
+  fi
 
   return 0
 }
 
-tile_windows() {
-  local area_x="$1"
-  local area_y="$2"
-  local area_w="$3"
-  local area_h="$4"
-  shift 4
-  local -a windows=( "$@" )
-  local count="${#windows[@]}"
-  local i window_id
-  local current_x remaining_w remaining_count target_outer_w
-  local outer
-  local outer_x outer_y outer_w outer_h
+declare -a SLOT_WINDOWS
+declare -a SLOT_X
+declare -a SLOT_Y
+declare -a SLOT_W
+declare -a SLOT_H
 
-  current_x="$area_x"
-  remaining_w="$area_w"
+init_slot_arrays() {
+  local i
+  SLOT_WINDOWS=()
+  SLOT_X=()
+  SLOT_Y=()
+  SLOT_W=()
+  SLOT_H=()
+  for (( i=1; i<=SLOT_COUNT; i++ )); do
+    SLOT_WINDOWS[$i]=""
+    SLOT_X[$i]=0
+    SLOT_Y[$i]=0
+    SLOT_W[$i]=0
+    SLOT_H[$i]=0
+  done
+}
 
-  for (( i=0; i<count; i++ )); do
-    window_id="${windows[$i]}"
-    remaining_count=$(( count - i ))
-    target_outer_w=$(( remaining_w / remaining_count ))
+adjust_slot_rect_for_overlap() {
+  local col="$1"
+  local row="$2"
+  local base_x="$3"
+  local base_y="$4"
+  local base_w="$5"
+  local base_h="$6"
+  local left_extra=0
+  local right_extra=0
+  local top_extra=0
+  local bottom_extra=0
+  local seam_left=$(( INNER_SEAM_OVERLAP_X / 2 ))
+  local seam_right=$(( INNER_SEAM_OVERLAP_X - seam_left ))
+  local seam_top=$(( INNER_SEAM_OVERLAP_Y / 2 ))
+  local seam_bottom=$(( INNER_SEAM_OVERLAP_Y - seam_top ))
+  local slot_x="$base_x"
+  local slot_y="$base_y"
+  local slot_w="$base_w"
+  local slot_h="$base_h"
 
-    if (( i == count - 1 )); then
-      target_outer_w="$remaining_w"
+  if (( col > 1 )); then
+    left_extra="$seam_left"
+  fi
+  if (( col < GRID_COLS )); then
+    right_extra="$seam_right"
+  fi
+  if (( row > 1 )); then
+    top_extra="$seam_top"
+  fi
+  if (( row < GRID_ROWS )); then
+    bottom_extra="$seam_bottom"
+  fi
+
+  slot_x=$(( slot_x - left_extra ))
+  slot_y=$(( slot_y - top_extra ))
+  slot_w=$(( slot_w + left_extra + right_extra ))
+  slot_h=$(( slot_h + top_extra + bottom_extra ))
+
+  printf '%s %s %s %s\n' "$slot_x" "$slot_y" "$slot_w" "$slot_h"
+}
+
+build_slots() {
+  local usable_x="$1"
+  local usable_y="$2"
+  local usable_w="$3"
+  local usable_h="$4"
+  local col row slot
+  local base_x base_y base_w base_h
+  local slot_rect
+  local col_base col_remainder row_base row_remainder
+
+  col_base=$(( usable_w / GRID_COLS ))
+  col_remainder=$(( usable_w % GRID_COLS ))
+  row_base=$(( usable_h / GRID_ROWS ))
+  row_remainder=$(( usable_h % GRID_ROWS ))
+  slot=1
+
+  for (( row=1; row<=GRID_ROWS; row++ )); do
+    base_y=$(( usable_y + (row - 1) * row_base ))
+    base_h="$row_base"
+    if (( row == GRID_ROWS )); then
+      base_h=$(( base_h + row_remainder ))
     fi
 
-    if (( DRY_RUN == 1 )); then
-      log "DRY-RUN window=$window_id x=$current_x y=$area_y w=$target_outer_w h=$area_h title=$(get_window_title "$window_id")"
-      current_x=$(( current_x + target_outer_w ))
-      remaining_w=$(( area_x + area_w - current_x ))
+    for (( col=1; col<=GRID_COLS; col++ )); do
+      base_x=$(( usable_x + (col - 1) * col_base ))
+      base_w="$col_base"
+      if (( col == GRID_COLS )); then
+        base_w=$(( base_w + col_remainder ))
+      fi
+
+      slot_rect="$(adjust_slot_rect_for_overlap "$col" "$row" "$base_x" "$base_y" "$base_w" "$base_h")"
+      read -r SLOT_X[$slot] SLOT_Y[$slot] SLOT_W[$slot] SLOT_H[$slot] <<<"$slot_rect"
+      slot=$(( slot + 1 ))
+    done
+  done
+}
+
+slot_is_empty() {
+  local slot="$1"
+  [[ -z "${SLOT_WINDOWS[$slot]:-}" ]]
+}
+
+find_first_empty_slot() {
+  local slot
+  for (( slot=1; slot<=SLOT_COUNT; slot++ )); do
+    if slot_is_empty "$slot"; then
+      printf '%s\n' "$slot"
+      return 0
+    fi
+  done
+  return 1
+}
+
+window_in_slots() {
+  local window_id="$1"
+  local slot
+  for (( slot=1; slot<=SLOT_COUNT; slot++ )); do
+    if [[ "${SLOT_WINDOWS[$slot]:-}" == "$window_id" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+place_window_in_slot() {
+  local slot="$1"
+  local window_id="$2"
+  local slot_x="${SLOT_X[$slot]}"
+  local slot_y="${SLOT_Y[$slot]}"
+  local slot_w="${SLOT_W[$slot]}"
+  local slot_h="${SLOT_H[$slot]}"
+  local actual_outer
+  local actual_x actual_y actual_w actual_h
+
+  if (( DRY_RUN == 1 )); then
+    log "DRY-RUN slot=$slot window=$window_id x=$slot_x y=$slot_y w=$slot_w h=$slot_h title=$(get_window_title "$window_id")"
+    SLOT_WINDOWS[$slot]="$window_id"
+    return 0
+  fi
+
+  prepare_window "$window_id"
+  resize_window_to_outer_size "$window_id" "$slot_w" "$slot_h" || return 1
+  move_window_outer "$window_id" "$slot_x" "$slot_y" || return 1
+  actual_outer="$(get_outer_geometry "$window_id")" || return 1
+  read -r actual_x actual_y actual_w actual_h <<<"$actual_outer"
+  SLOT_WINDOWS[$slot]="$window_id"
+  debug "placed slot=$slot window=$window_id target_outer=(${slot_x},${slot_y},${slot_w},${slot_h}) actual_outer=(${actual_x},${actual_y},${actual_w},${actual_h})"
+}
+
+write_state_file() {
+  ensure_state_dir
+  {
+    printf 'WORKSPACE_ID=%q\n' "$WORKSPACE_ID"
+    printf 'MONITOR_NAME=%q\n' "$MONITOR_NAME"
+    printf 'MONITOR_X=%q\n' "$MONITOR_X"
+    printf 'MONITOR_Y=%q\n' "$MONITOR_Y"
+    printf 'MONITOR_W=%q\n' "$MONITOR_W"
+    printf 'MONITOR_H=%q\n' "$MONITOR_H"
+    printf 'USABLE_X=%q\n' "$USABLE_X"
+    printf 'USABLE_Y=%q\n' "$USABLE_Y"
+    printf 'USABLE_W=%q\n' "$USABLE_W"
+    printf 'USABLE_H=%q\n' "$USABLE_H"
+    local slot
+    for (( slot=1; slot<=SLOT_COUNT; slot++ )); do
+      printf 'SLOT_%d_WINDOW_ID=%q\n' "$slot" "${SLOT_WINDOWS[$slot]:-}"
+    done
+  } >"$STATE_FILE"
+}
+
+load_state_file() {
+  [[ -f "$STATE_FILE" ]] || die "$EXIT_STATE" "state file not found: $STATE_FILE"
+  # shellcheck disable=SC1090
+  source "$STATE_FILE"
+  init_slot_arrays
+  local slot var_name
+  for (( slot=1; slot<=SLOT_COUNT; slot++ )); do
+    var_name="SLOT_${slot}_WINDOW_ID"
+    SLOT_WINDOWS[$slot]="${!var_name:-}"
+  done
+  build_slots "$USABLE_X" "$USABLE_Y" "$USABLE_W" "$USABLE_H"
+}
+
+print_status() {
+  local pid
+  if pid="$(get_running_daemon_pid 2>/dev/null)"; then
+    log "daemon: running (pid $pid)"
+  else
+    log "daemon: not running"
+  fi
+
+  if [[ -f "$STATE_FILE" ]]; then
+    load_state_file
+    log "monitor: ${MONITOR_NAME} (${MONITOR_X},${MONITOR_Y} ${MONITOR_W}x${MONITOR_H})"
+    log "usable: (${USABLE_X},${USABLE_Y} ${USABLE_W}x${USABLE_H})"
+    log "workspace: ${WORKSPACE_ID}"
+    local slot window_id title
+    for (( slot=1; slot<=SLOT_COUNT; slot++ )); do
+      window_id="${SLOT_WINDOWS[$slot]:-}"
+      if [[ -n "$window_id" ]]; then
+        title="$(get_window_title "$window_id")"
+        log "slot $slot: [$window_id] $title"
+      else
+        log "slot $slot: empty"
+      fi
+    done
+  fi
+}
+
+stop_daemon() {
+  local pid
+  if ! pid="$(get_running_daemon_pid 2>/dev/null)"; then
+    rm -f "$PID_FILE"
+    log "daemon: not running"
+    return 0
+  fi
+
+  kill "$pid" >/dev/null 2>&1 || true
+  rm -f "$PID_FILE" "$STATE_FILE"
+  log "daemon: stopped"
+}
+
+compute_layout_context() {
+  local active_window_id
+  local current_desktop
+  local target_monitor
+  local workarea
+  local intersected_area
+
+  active_window_id="$(get_active_window_id)" || die "$EXIT_ENV" "could not determine the active window"
+  current_desktop="$(get_current_desktop)"
+  [[ -n "$current_desktop" ]] || die "$EXIT_ENV" "could not determine the current desktop"
+
+  target_monitor="$(pick_target_monitor "$active_window_id")" || die "$EXIT_ENV" "could not map the active window to a monitor"
+  read -r MONITOR_NAME MONITOR_X MONITOR_Y MONITOR_W MONITOR_H <<<"$target_monitor"
+
+  workarea="$(get_workarea_rect)" || die "$EXIT_ENV" "could not read the desktop work area"
+  intersected_area="$(intersect_rects "$MONITOR_X" "$MONITOR_Y" "$MONITOR_W" "$MONITOR_H" $workarea)" || \
+    die "$EXIT_ENV" "monitor $MONITOR_NAME has no usable work area"
+  read -r USABLE_X USABLE_Y USABLE_W USABLE_H <<<"$intersected_area"
+
+  WORKSPACE_ID="$current_desktop"
+  init_slot_arrays
+  build_slots "$USABLE_X" "$USABLE_Y" "$USABLE_W" "$USABLE_H"
+}
+
+collect_candidate_windows() {
+  local desktop_id="$1"
+  local monitor_x="$2"
+  local monitor_y="$3"
+  local monitor_w="$4"
+  local monitor_h="$5"
+  local include_active="${6:-1}"
+  local active_window_id=""
+  local stack_window_id
+  local -A seen=()
+
+  if [[ "$include_active" == "1" ]]; then
+    active_window_id="$(get_active_window_id || true)"
+    if [[ -n "$active_window_id" ]] && window_is_candidate "$active_window_id" "$desktop_id" "$monitor_x" "$monitor_y" "$monitor_w" "$monitor_h"; then
+      printf '%s\n' "$active_window_id"
+      seen["$active_window_id"]=1
+    fi
+  fi
+
+  while read -r stack_window_id; do
+    [[ -n "$stack_window_id" ]] || continue
+    [[ -z "${seen[$stack_window_id]:-}" ]] || continue
+    if window_is_candidate "$stack_window_id" "$desktop_id" "$monitor_x" "$monitor_y" "$monitor_w" "$monitor_h"; then
+      printf '%s\n' "$stack_window_id"
+      seen["$stack_window_id"]=1
+    fi
+  done < <(get_stacking_order || true)
+}
+
+fill_slots_from_candidates() {
+  local candidate
+  local slot
+  local filled=0
+
+  while read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if window_in_slots "$candidate"; then
       continue
     fi
+    slot="$(find_first_empty_slot || true)"
+    [[ -n "$slot" ]] || break
+    place_window_in_slot "$slot" "$candidate" || die "$EXIT_MOVE_FAILED" "failed to place window $candidate"
+    filled=1
+  done < <(collect_candidate_windows "$WORKSPACE_ID" "$MONITOR_X" "$MONITOR_Y" "$MONITOR_W" "$MONITOR_H")
 
-    prepare_window "$window_id"
-    resize_window_to_outer_size "$window_id" "$target_outer_w" "$area_h"
-    move_window_outer "$window_id" "$current_x" "$area_y"
+  return "$filled"
+}
 
-    outer="$(get_outer_geometry "$window_id")" || return 1
-    read -r outer_x outer_y outer_w outer_h <<<"$outer"
-    debug "placed $window_id outer=(${outer_x},${outer_y},${outer_w},${outer_h})"
+render_empty_slots() {
+  local slot
+  for (( slot=1; slot<=SLOT_COUNT; slot++ )); do
+    if slot_is_empty "$slot"; then
+      debug "slot $slot empty target=(${SLOT_X[$slot]},${SLOT_Y[$slot]},${SLOT_W[$slot]},${SLOT_H[$slot]})"
+    fi
+  done
+}
 
-    current_x=$(( outer_x + outer_w ))
-    remaining_w=$(( area_x + area_w - current_x ))
-    if (( remaining_w < 0 )); then
-      remaining_w=0
+refresh_managed_slots() {
+  local slot window_id
+  for (( slot=1; slot<=SLOT_COUNT; slot++ )); do
+    window_id="${SLOT_WINDOWS[$slot]:-}"
+    [[ -n "$window_id" ]] || continue
+    if ! window_exists "$window_id" || ! window_is_candidate "$window_id" "$WORKSPACE_ID" "$MONITOR_X" "$MONITOR_Y" "$MONITOR_W" "$MONITOR_H"; then
+      debug "release slot $slot window=$window_id"
+      SLOT_WINDOWS[$slot]=""
+    fi
+  done
+}
+
+initial_layout() {
+  fill_slots_from_candidates || true
+  render_empty_slots
+  write_state_file
+}
+
+daemon_loop() {
+  trap 'rm -f "$PID_FILE"; exit 0' INT TERM
+  echo "$$" >"$PID_FILE"
+  compute_layout_context
+  initial_layout
+
+  local last_active=""
+  local last_stack=""
+  local current_active current_stack
+
+  while true; do
+    refresh_managed_slots
+    current_active="$(xprop -root _NET_ACTIVE_WINDOW 2>/dev/null || true)"
+    current_stack="$(xprop -root _NET_CLIENT_LIST_STACKING 2>/dev/null || true)"
+
+    if [[ "$current_active" != "$last_active" || "$current_stack" != "$last_stack" ]]; then
+      fill_slots_from_candidates || true
+      write_state_file
+      last_active="$current_active"
+      last_stack="$current_stack"
+    else
+      write_state_file
+    fi
+
+    sleep "$DAEMON_POLL_INTERVAL"
+  done
+}
+
+start_daemon() {
+  local pid
+  local -a daemon_args
+  ensure_state_dir
+  if pid="$(get_running_daemon_pid 2>/dev/null)"; then
+    log "daemon: already running (pid $pid)"
+    return 0
+  fi
+
+  daemon_args=( "$0" --run-daemon )
+  if (( VERBOSE == 1 )); then
+    daemon_args+=( --verbose )
+  fi
+
+  nohup "${daemon_args[@]}" >"$LOG_FILE" 2>&1 &
+  sleep 0.2
+  pid="$(get_running_daemon_pid 2>/dev/null || true)"
+  [[ -n "$pid" ]] || die "$EXIT_STATE" "failed to start daemon"
+  log "daemon: started (pid $pid)"
+  log "log: $LOG_FILE"
+}
+
+run_once() {
+  compute_layout_context
+  fill_slots_from_candidates || true
+  render_empty_slots
+  write_state_file
+
+  local slotted=0
+  local slot window_id
+  for (( slot=1; slot<=SLOT_COUNT; slot++ )); do
+    window_id="${SLOT_WINDOWS[$slot]:-}"
+    if [[ -n "$window_id" ]]; then
+      slotted=$(( slotted + 1 ))
+    fi
+  done
+
+  (( slotted > 0 )) || die "$EXIT_NO_WINDOWS" "no windows matched the current monitor"
+
+  log "usable area: (${USABLE_X},${USABLE_Y} ${USABLE_W}x${USABLE_H}) on ${MONITOR_NAME}"
+  for (( slot=1; slot<=SLOT_COUNT; slot++ )); do
+    window_id="${SLOT_WINDOWS[$slot]:-}"
+    if [[ -n "$window_id" ]]; then
+      log "slot $slot: [$window_id] $(get_window_title "$window_id")"
+    else
+      log "slot $slot: empty"
     fi
   done
 }
@@ -671,6 +1081,18 @@ tile_windows() {
 parse_args() {
   while (( $# > 0 )); do
     case "$1" in
+      --daemon)
+        MODE="daemon"
+        ;;
+      --run-daemon)
+        MODE="run-daemon"
+        ;;
+      --status)
+        MODE="status"
+        ;;
+      --stop)
+        MODE="stop"
+        ;;
       --dry-run)
         DRY_RUN=1
         ;;
@@ -691,20 +1113,9 @@ parse_args() {
 
 main() {
   local session_type="${XDG_SESSION_TYPE:-}"
-  local active_window_id
-  local current_desktop
-  local target_monitor
-  local monitor_name monitor_x monitor_y monitor_w monitor_h
-  local workarea
-  local intersected_area
-  local area_x area_y area_w area_h
-  local stack_window_id
-  local -a selected_windows=()
-  local -A seen=()
-  local title
 
   parse_args "$@"
-  require_cmd xdotool xprop xwininfo xrandr
+  require_cmd xdotool xprop xwininfo xrandr nohup
 
   if [[ -z "${DISPLAY:-}" ]]; then
     die "$EXIT_ENV" "DISPLAY is not set; this command must run inside an X11 session"
@@ -716,48 +1127,26 @@ main() {
 
   xprop -root _NET_ACTIVE_WINDOW >/dev/null 2>&1 || die "$EXIT_ENV" "cannot access X11 display ${DISPLAY}"
 
-  active_window_id="$(get_active_window_id)" || die "$EXIT_ENV" "could not determine the active window"
-  current_desktop="$(get_current_desktop)"
-  [[ -n "$current_desktop" ]] || die "$EXIT_ENV" "could not determine the current desktop"
-
-  target_monitor="$(pick_target_monitor "$active_window_id")" || die "$EXIT_ENV" "could not map the active window to a monitor"
-  read -r monitor_name monitor_x monitor_y monitor_w monitor_h <<<"$target_monitor"
-
-  workarea="$(get_workarea_rect)" || die "$EXIT_ENV" "could not read the desktop work area"
-  intersected_area="$(intersect_rects "$monitor_x" "$monitor_y" "$monitor_w" "$monitor_h" $workarea)" || \
-    die "$EXIT_ENV" "monitor $monitor_name has no usable work area"
-  read -r area_x area_y area_w area_h <<<"$intersected_area"
-
-  if window_is_candidate "$active_window_id" "$current_desktop" "$monitor_x" "$monitor_y" "$monitor_w" "$monitor_h"; then
-    selected_windows+=("$active_window_id")
-    seen["$active_window_id"]=1
-  else
-    die "$EXIT_NO_WINDOWS" "the active window is not a supported top-level window"
-  fi
-
-  while read -r stack_window_id; do
-    [[ -n "$stack_window_id" ]] || continue
-    [[ -z "${seen[$stack_window_id]:-}" ]] || continue
-    if window_is_candidate "$stack_window_id" "$current_desktop" "$monitor_x" "$monitor_y" "$monitor_w" "$monitor_h"; then
-      selected_windows+=("$stack_window_id")
-      seen["$stack_window_id"]=1
-    fi
-    if (( ${#selected_windows[@]} == 3 )); then
-      break
-    fi
-  done < <(get_stacking_order || true)
-
-  (( ${#selected_windows[@]} > 0 )) || die "$EXIT_NO_WINDOWS" "no windows matched the current monitor"
-
-  if ! tile_windows "$area_x" "$area_y" "$area_w" "$area_h" "${selected_windows[@]}"; then
-    die "$EXIT_MOVE_FAILED" "window move or resize failed"
-  fi
-
-  log "Tiled ${#selected_windows[@]} window(s) on ${monitor_name}"
-  for stack_window_id in "${selected_windows[@]}"; do
-    title="$(get_window_title "$stack_window_id")"
-    log " - [$stack_window_id] $title"
-  done
+  case "$MODE" in
+    once)
+      run_once
+      ;;
+    daemon)
+      start_daemon
+      ;;
+    run-daemon)
+      daemon_loop
+      ;;
+    status)
+      print_status
+      ;;
+    stop)
+      stop_daemon
+      ;;
+    *)
+      die "$EXIT_ENV" "unsupported mode: $MODE"
+      ;;
+  esac
 }
 
 main "$@"

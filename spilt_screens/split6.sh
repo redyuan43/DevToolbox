@@ -201,6 +201,105 @@ get_frame_extents() {
   fi
 }
 
+get_window_resize_hints() {
+  local window_id="$1"
+  local prop
+  local base_w="" base_h="" inc_w="" inc_h="" min_w="" min_h=""
+
+  prop="$(xprop -id "$window_id" WM_NORMAL_HINTS 2>/dev/null || true)"
+  [[ -n "$prop" ]] || return 1
+
+  base_w="$(printf '%s\n' "$prop" | sed -n 's/.*base size: \([0-9]\+\) by [0-9]\+.*/\1/p' | head -n1)"
+  base_h="$(printf '%s\n' "$prop" | sed -n 's/.*base size: [0-9]\+ by \([0-9]\+\).*/\1/p' | head -n1)"
+  inc_w="$(printf '%s\n' "$prop" | sed -n 's/.*resize increment: \([0-9]\+\) by [0-9]\+.*/\1/p' | head -n1)"
+  inc_h="$(printf '%s\n' "$prop" | sed -n 's/.*resize increment: [0-9]\+ by \([0-9]\+\).*/\1/p' | head -n1)"
+  min_w="$(printf '%s\n' "$prop" | sed -n 's/.*minimum size: \([0-9]\+\) by [0-9]\+.*/\1/p' | head -n1)"
+  min_h="$(printf '%s\n' "$prop" | sed -n 's/.*minimum size: [0-9]\+ by \([0-9]\+\).*/\1/p' | head -n1)"
+
+  [[ -n "$base_w" ]] || base_w="${min_w:-0}"
+  [[ -n "$base_h" ]] || base_h="${min_h:-0}"
+  [[ -n "$inc_w" ]] || inc_w=1
+  [[ -n "$inc_h" ]] || inc_h=1
+  [[ -n "$min_w" ]] || min_w="$base_w"
+  [[ -n "$min_h" ]] || min_h="$base_h"
+
+  printf '%s %s %s %s %s %s\n' "$base_w" "$base_h" "$inc_w" "$inc_h" "$min_w" "$min_h"
+}
+
+compute_hint_min_units() {
+  local base="$1"
+  local inc="$2"
+  local min_size="$3"
+  local min_units=1
+
+  if (( inc <= 0 )); then
+    printf '1\n'
+    return 0
+  fi
+
+  if (( min_size > base )); then
+    min_units=$(( (min_size - base + inc - 1) / inc ))
+  fi
+
+  (( min_units < 1 )) && min_units=1
+  printf '%s\n' "$min_units"
+}
+
+pick_best_hinted_units() {
+  local target_client="$1"
+  local base="$2"
+  local inc="$3"
+  local min_size="$4"
+  local min_units raw_units lower_units upper_units
+  local -a candidates
+  local candidate units size delta
+  local best_units="" best_size="" best_delta=""
+
+  min_units="$(compute_hint_min_units "$base" "$inc" "$min_size")"
+  raw_units="$min_units"
+  if (( target_client > base )); then
+    raw_units=$(( (target_client - base) / inc ))
+  fi
+
+  lower_units="$raw_units"
+  upper_units=$(( raw_units + 1 ))
+  candidates=( "$min_units" "$lower_units" "$upper_units" )
+
+  for candidate in "${candidates[@]}"; do
+    units="$candidate"
+    (( units < min_units )) && units="$min_units"
+    size=$(( base + units * inc ))
+    delta=$(( target_client - size ))
+    delta="${delta#-}"
+    if [[ -z "$best_delta" || "$delta" -lt "$best_delta" ]]; then
+      best_delta="$delta"
+      best_units="$units"
+      best_size="$size"
+    fi
+  done
+
+  printf '%s %s %s\n' "$best_units" "$best_size" "$min_units"
+}
+
+hint_unit_adjustment_for_delta() {
+  local delta="$1"
+  local inc="$2"
+  local abs_delta steps
+
+  abs_delta="${delta#-}"
+  if (( abs_delta == 0 || inc <= 0 )); then
+    printf '0\n'
+    return 0
+  fi
+
+  steps=$(( (abs_delta + inc - 1) / inc ))
+  if (( delta < 0 )); then
+    steps=$(( -steps ))
+  fi
+
+  printf '%s\n' "$steps"
+}
+
 get_window_title() {
   local window_id="$1"
   local title
@@ -426,12 +525,91 @@ move_window_outer() {
   return 0
 }
 
+resize_window_using_hints() {
+  local window_id="$1"
+  local target_outer_w="$2"
+  local target_outer_h="$3"
+  local left="$4"
+  local right="$5"
+  local top="$6"
+  local bottom="$7"
+  local base_w="$8"
+  local base_h="$9"
+  local inc_w="${10}"
+  local inc_h="${11}"
+  local min_w="${12}"
+  local min_h="${13}"
+  local target_client_w target_client_h
+  local width_hint height_hint
+  local width_units expected_client_w min_units_w
+  local height_units expected_client_h min_units_h
+  local best_units_w best_units_h
+  local best_abs_delta=999999
+  local outer
+  local outer_x outer_y actual_outer_w actual_outer_h
+  local iteration delta_w delta_h current_abs_delta
+  local adjust_w adjust_h
+
+  target_client_w=$(( target_outer_w - left - right ))
+  target_client_h=$(( target_outer_h - top - bottom ))
+  (( target_client_w < min_w )) && target_client_w="$min_w"
+  (( target_client_h < min_h )) && target_client_h="$min_h"
+
+  width_hint="$(pick_best_hinted_units "$target_client_w" "$base_w" "$inc_w" "$min_w")"
+  height_hint="$(pick_best_hinted_units "$target_client_h" "$base_h" "$inc_h" "$min_h")"
+  read -r width_units expected_client_w min_units_w <<<"$width_hint"
+  read -r height_units expected_client_h min_units_h <<<"$height_hint"
+
+  best_units_w="$width_units"
+  best_units_h="$height_units"
+
+  for iteration in 1 2 3 4 5 6; do
+    debug "resize $window_id hints iter=$iteration request_units=${width_units}x${height_units} target_outer=${target_outer_w}x${target_outer_h}"
+    run_xdotool windowsize --usehints "$window_id" "$width_units" "$height_units"
+    sleep "$XDO_SETTLE_DELAY"
+    outer="$(get_outer_geometry "$window_id")" || return 1
+    read -r outer_x outer_y actual_outer_w actual_outer_h <<<"$outer"
+    delta_w=$(( target_outer_w - actual_outer_w ))
+    delta_h=$(( target_outer_h - actual_outer_h ))
+    current_abs_delta=$(( ${delta_w#-} + ${delta_h#-} ))
+    debug "resize $window_id hints iter=$iteration actual_outer=${actual_outer_w}x${actual_outer_h} delta=${delta_w}x${delta_h}"
+
+    if (( current_abs_delta < best_abs_delta )); then
+      best_abs_delta="$current_abs_delta"
+      best_units_w="$width_units"
+      best_units_h="$height_units"
+    fi
+
+    if (( delta_w == 0 && delta_h == 0 )); then
+      return 0
+    fi
+
+    adjust_w="$(hint_unit_adjustment_for_delta "$delta_w" "$inc_w")"
+    adjust_h="$(hint_unit_adjustment_for_delta "$delta_h" "$inc_h")"
+    if (( adjust_w == 0 && adjust_h == 0 )); then
+      break
+    fi
+
+    width_units=$(( width_units + adjust_w ))
+    height_units=$(( height_units + adjust_h ))
+    (( width_units < min_units_w )) && width_units="$min_units_w"
+    (( height_units < min_units_h )) && height_units="$min_units_h"
+  done
+
+  debug "resize $window_id hints settle best_units=${best_units_w}x${best_units_h}"
+  run_xdotool windowsize --usehints "$window_id" "$best_units_w" "$best_units_h"
+  sleep "$XDO_SETTLE_DELAY"
+  return 0
+}
+
 resize_window_to_outer_size() {
   local window_id="$1"
   local target_outer_w="$2"
   local target_outer_h="$3"
   local extents
   local left right top bottom
+  local resize_hints
+  local base_w base_h inc_w inc_h min_w min_h
   local requested_w requested_h
   local outer
   local outer_x outer_y actual_outer_w actual_outer_h
@@ -442,6 +620,19 @@ resize_window_to_outer_size() {
 
   extents="$(get_frame_extents "$window_id")"
   read -r left right top bottom <<<"$extents"
+
+  resize_hints="$(get_window_resize_hints "$window_id" || true)"
+  if [[ -n "$resize_hints" ]]; then
+    read -r base_w base_h inc_w inc_h min_w min_h <<<"$resize_hints"
+    if (( inc_w > 1 || inc_h > 1 )); then
+      debug "resize $window_id using hints base=${base_w}x${base_h} inc=${inc_w}x${inc_h} min=${min_w}x${min_h}"
+      resize_window_using_hints \
+        "$window_id" "$target_outer_w" "$target_outer_h" \
+        "$left" "$right" "$top" "$bottom" \
+        "$base_w" "$base_h" "$inc_w" "$inc_h" "$min_w" "$min_h"
+      return 0
+    fi
+  fi
 
   requested_w=$(( target_outer_w - left - right ))
   requested_h=$(( target_outer_h - top - bottom ))

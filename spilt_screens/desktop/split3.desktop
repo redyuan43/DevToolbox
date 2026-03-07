@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Split 3
+Comment=Tile windows into 3 columns on the current monitor
+Exec=/home/dgx/github/DevToolbox/spilt_screens/split3.sh
+Path=/home/dgx/github/DevToolbox/spilt_screens
+Icon=utilities-terminal
+Terminal=false
+StartupNotify=false
+Categories=Utility;

@@ -1,9 +1,10 @@
 # Ubuntu X11 Window Split Tools
 
-这个目录提供四个面向 Ubuntu GNOME X11 的窗口平铺/聚焦/配置脚本：
+这个目录提供五个面向 Ubuntu GNOME X11 的窗口平铺/聚焦/配置脚本：
 
 - `split3.sh`: 将当前显示器上的窗口平铺为 1 到 3 列
 - `split6.sh`: 将当前显示器固定为 `3 列 x 2 行` 网格，并支持后台守护模式
+- `split16.sh`: 将当前显示器固定为 `4 列 x 3 行` 网格（最多 12 个槽位）
 - `focus_split6_slot.sh`: 聚焦六分屏中的某个槽位，并把鼠标移动到该槽位中心
 - `export_split6_hotkeys.sh`: 导出当前 `split6` 相关 GNOME 快捷键备份
 
@@ -16,15 +17,25 @@
 - 按当前活动窗口所在显示器工作
 - 只收集当前工作区、当前显示器上的普通可见窗口
 - 自动根据窗口数量退化为 1 列、2 列或 3 列
+- 对终端类窗口会读取 `WM_NORMAL_HINTS`，按当前显示器可用像素自动换算最接近的列数和行数
 - 支持 `--dry-run` 和 `--verbose`
 
 ### split6.sh
 
 - 使用固定 `3 x 2` 槽位布局
 - 基于 `_NET_WORKAREA` 计算可用区域，自动避开 GNOME 顶栏和 Dock
+- 终端类窗口会按当前显示器尺寸自动换算字符网格大小，减少不同显示器上的错位
 - 支持一次性整理窗口，或使用守护进程自动补位
 - 支持 `--daemon`、`--status`、`--stop`、`--dry-run`、`--verbose`
 - 内部边界留有轻微重叠，用来遮住 GNOME 窗口阴影缝隙
+
+### split16.sh
+
+- 使用固定 `4 x 3` 槽位布局（12 槽位）
+- 同样基于 `_NET_WORKAREA` 计算可用区域，尽量占满可用空间
+- 终端类窗口同样会按当前显示器尺寸自动换算列数和行数
+- 窗口不足 12 个时保留空槽位，不做拉伸填满
+- 支持 `--daemon`、`--status`、`--stop`、`--dry-run`、`--verbose`
 
 ### focus_split6_slot.sh
 
@@ -70,6 +81,7 @@ sudo apt install -y xdotool x11-utils x11-xserver-utils
 ```bash
 cd /home/dgx/github/DevToolbox/spilt_screens
 chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh export_split6_hotkeys.sh
+chmod +x split16.sh
 ```
 
 直接运行：
@@ -77,6 +89,13 @@ chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh ex
 ```bash
 ./split3.sh
 ./split6.sh
+./split16.sh
+```
+
+安装 Desktop 桌面启动器：
+
+```bash
+./install_desktop_launchers.sh
 ```
 
 预览而不移动窗口：
@@ -84,6 +103,7 @@ chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh ex
 ```bash
 ./split3.sh --dry-run
 ./split6.sh --dry-run
+./split16.sh --dry-run
 ```
 
 查看调试信息：
@@ -91,7 +111,10 @@ chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh ex
 ```bash
 ./split3.sh --verbose
 ./split6.sh --verbose
+./split16.sh --verbose
 ```
+
+桌面启动器模板位于 `desktop/`，安装脚本会复制到 `~/Desktop` 并尽量标记为受信任。
 
 查看槽位状态并聚焦：
 
@@ -174,6 +197,22 @@ chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh ex
 - 状态文件：`~/.cache/split6/state.env`
 - 日志文件：`~/.cache/split6/daemon.log`
 
+## split16.sh 用法
+
+命令：
+
+```bash
+./split16.sh [--daemon|--status|--stop] [--dry-run] [--verbose] [--help]
+```
+
+行为：
+
+- 固定使用 `4 列 x 3 行`
+- 最多填充 12 个槽位
+- 少于 12 个窗口时，其余槽位保持为空
+- 守护模式会锁定启动时所在的显示器与工作区
+- 运行时状态目录：`~/.cache/split16`
+
 ## focus_split6_slot.sh 用法
 
 命令：
@@ -239,7 +278,7 @@ gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings
 
 默认快捷键：
 
-- `Ctrl+Alt+0`：执行一次六分屏整理
+- `Ctrl+Alt+0`：执行一次 4x3 分屏整理（`split16.sh`）
 - `Ctrl+Alt+Shift+6`：启动六分屏守护
 - `Ctrl+Alt+Shift+5`：停止六分屏守护
 - `Ctrl+Alt+1`：聚焦槽位 1
@@ -259,12 +298,13 @@ gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings
 
 ## 安装到 PATH
 
-如果你希望直接使用 `split3`、`split6`、`focus_split6_slot` 和 `export_split6_hotkeys` 命令：
+如果你希望直接使用 `split3`、`split6`、`split16`、`focus_split6_slot` 和 `export_split6_hotkeys` 命令：
 
 ```bash
 mkdir -p ~/.local/bin
 ln -sf "$(pwd)/split3.sh" ~/.local/bin/split3
 ln -sf "$(pwd)/split6.sh" ~/.local/bin/split6
+ln -sf "$(pwd)/split16.sh" ~/.local/bin/split16
 ln -sf "$(pwd)/focus_split6_slot.sh" ~/.local/bin/focus_split6_slot
 ln -sf "$(pwd)/export_split6_hotkeys.sh" ~/.local/bin/export_split6_hotkeys
 ```
@@ -287,5 +327,6 @@ echo "$PATH"
 
 - 仅支持 X11，会话为原生 Wayland 时不可用
 - 某些应用可能忽略通用 X11 的 resize/move 请求
+- 终端窗口受字符网格限制，脚本会尽量逼近目标尺寸，但个别像素级误差仍可能存在
 - 部分 GNOME 特殊窗口状态无法完全清除，脚本仅做尽力处理
 - `split6.sh --daemon` 使用轻量轮询，不是事件驱动，因此响应是近实时而不是瞬时
