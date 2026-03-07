@@ -6,6 +6,7 @@ readonly BASE_SCHEMA="org.gnome.settings-daemon.plugins.media-keys"
 readonly CUSTOM_SCHEMA="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
 readonly MEDIA_KEYS_SCHEMA="org.gnome.settings-daemon.plugins.media-keys"
 readonly REPO_DIR="/home/dgx/github/DevToolbox/spilt_screens"
+readonly SPLIT16_SCRIPT="${REPO_DIR}/split16.sh"
 readonly SPLIT6_SCRIPT="${REPO_DIR}/split6.sh"
 readonly FOCUS_SCRIPT="${REPO_DIR}/focus_split6_slot.sh"
 
@@ -114,7 +115,7 @@ configure_focus_binding() {
 
 print_summary() {
   local path
-  printf 'Configured split6 hotkeys:\n'
+  printf 'Configured split hotkeys:\n'
   for path in "${EXISTING_PATHS[@]}"; do
     if gsettings get "$CUSTOM_SCHEMA:$path" name >/dev/null 2>&1; then
       printf '%s\n' "$path"
@@ -133,7 +134,8 @@ main() {
   # Free Ctrl+Alt+1 for slot focus and keep a terminal shortcut on a nearby key.
   gsettings set "$MEDIA_KEYS_SCHEMA" terminal "['<Control><Alt>7']"
 
-  ensure_binding "Split6 Arrange" "$SPLIT6_SCRIPT" "<Control><Alt>0"
+  ensure_binding "Split43 Arrange" "$SPLIT16_SCRIPT" "<Control><Alt>0"
+  ensure_binding "Split6 Arrange" "$SPLIT6_SCRIPT" "<Control><Alt><Shift>0"
   ensure_binding "Split6 Daemon Start" "$SPLIT6_SCRIPT --daemon" "<Control><Alt><Shift>6"
   ensure_binding "Split6 Daemon Stop" "$SPLIT6_SCRIPT --stop" "<Control><Alt><Shift>5"
 
