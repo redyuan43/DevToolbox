@@ -1,0 +1,86 @@
+window:
+  monitor_mode: "standalone"
+  title_regex: "^(Weixin|微信)$"
+  main_title_regex: "^(Weixin|微信)$"
+  class_name: "wechat"
+  display: ":1"
+  xauthority: "/run/user/1000/gdm/Xauthority"
+  focus_allowed: true
+  calibration_key: null
+
+poll:
+  interval_ms: 2000
+
+conflict:
+  user_idle_ms: 5000
+  wechat_pause_ms: 30000
+  send_conflict_cooldown_ms: 60000
+
+guard:
+  whitelist:
+    private_chats:
+      - "Alice"
+    group_chats:
+      - "项目讨论群"
+  context:
+    strategy: "current_screen"
+  files:
+    auto_download_inbound: true
+    downloads:
+      root_dir: "/home/dgx/Documents/xwechat_files"
+      organize_by_chat_title: true
+      policy: "all_inbound_files"
+      poll_timeout_s: 30
+      poll_interval_ms: 1000
+
+tools:
+  send_file:
+    enabled: true
+    attachments:
+      explicit_send_extensions:
+        - "txt"
+        - "md"
+      chooser_open_delay_ms: 500
+      post_send_delay_ms: 1200
+
+experimental:
+  history:
+    enabled: false
+    max_pages: 1
+    scroll_mode: "page"
+
+ollama:
+  api_format: "openai"
+  base_url: "http://localhost:1234/v1"
+  api_key: null
+  vision_model: "qwen/qwen3.5-35b-a3b"
+  reply_model: "qwen/qwen3.5-35b-a3b"
+  timeout_s: 90
+  disable_thinking: true
+
+reply:
+  system_prompt: >
+    你是一个谨慎、简洁、口语化的微信代回复助手。
+    只输出可以直接发送给对方的最终回复，不要解释。
+  per_contact_prompts:
+    Alice: "语气自然，优先用简短中文回复。"
+  max_chars: 120
+  blacklist_keywords:
+    - "验证码"
+    - "付款"
+    - "转账"
+    - "二维码"
+    - "登录"
+    - "密码"
+    - "链接"
+    - "http://"
+    - "https://"
+
+safety:
+  disallow_groups: false
+  disallow_links: true
+  require_confidence: 0.85
+  dry_run: false
+
+state_dir: "/home/dgx/.local/state/wechat-auto-reply"
+config_dir: "/home/dgx/.config/wechat-auto-reply"

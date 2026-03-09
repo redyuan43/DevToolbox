@@ -27,6 +27,12 @@ DevToolbox/
 │   └── README.md                      # 使用说明
 ├── image-processing/                   # 🖼️ 图像处理工具
 │   └── process_image.py
+├── wechat-auto-reply/                  # 💬 Ubuntu 微信自动回复工具
+│   ├── main.py                         # CLI 入口
+│   ├── config.example.yaml             # 配置模板
+│   ├── README.md                       # 详细使用说明
+│   ├── systemd/                        # systemd --user 单元模板
+│   └── wechat_auto_reply/             # 核心实现
 ├── xiaomi_tts_project/                 # 🗣️ 小米音箱TTS系统
 │   ├── xiaomi_tts_websocket.py        # WebSocket TTS控制
 │   ├── simple_test.py                 # 简单测试脚本
@@ -156,6 +162,20 @@ cd photo-sync-project
   process_image.split_image_to_grid(img, 'output_directory')
   ```
 - **输出**: 9个网格片段 + 1个预览图
+
+### 💬 Ubuntu 微信自动回复 (wechat-auto-reply/)
+
+#### 本地 X11 + Ollama 驱动的微信桌面自动化
+- **功能**:
+  - 自动发现微信 Linux 主窗口
+  - 通过截图 + 本地视觉模型读取会话列表与消息区
+  - 通过本地文本模型生成回复
+  - 支持 `calibrate`、`once`、`daemon`、`pause`、`resume`、`status`
+- **技术路线**:
+  - `xwininfo` / `xdotool` / `xinput`
+  - `ffmpeg x11grab`
+  - `qwen3-vl` + `glm-4.7-flash`
+- **文档**: `wechat-auto-reply/README.md`
 
 ### 📚 文档集合 (docs/)
 

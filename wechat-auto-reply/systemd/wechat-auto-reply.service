@@ -1,0 +1,17 @@
+[Unit]
+Description=WeChat Auto Reply Daemon
+After=graphical-session.target network-online.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/github/DevToolbox/wechat-auto-reply
+ExecStart=/usr/bin/python3 %h/github/DevToolbox/wechat-auto-reply/main.py --config %h/.config/wechat-auto-reply/config.yaml daemon
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=DISPLAY=:1
+Environment=XAUTHORITY=/run/user/1000/gdm/Xauthority
+
+[Install]
+WantedBy=default.target
