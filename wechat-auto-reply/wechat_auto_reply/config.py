@@ -202,6 +202,28 @@ class SafetyConfig:
 
 
 @dataclass(slots=True)
+class DbParseConfig:
+    enabled: bool = False
+    target_chat_title: str = "新技术讨论"
+    sqlcipher_bin: str = "/usr/bin/sqlcipher"
+    hook_log_path: str = str(
+        Path.home() / ".local" / "state" / "wechat-auto-reply" / "db_hook.jsonl"
+    )
+    hook_library_path: str = str(
+        Path.home() / ".local" / "state" / "wechat-auto-reply" / "libwechat_db_hook.so"
+    )
+    debounce_ms: int = 500
+    account_dir: str = "auto"
+    resolver_mode: str = "auto"
+    memory_probe_use_sudo: bool = True
+    memory_probe_timeout_s: int = 15
+    popup_enabled: bool = True
+    popup_cooldown_ms: int = 5000
+    popup_existing_window_only: bool = True
+    extract_non_text_metadata_only: bool = True
+
+
+@dataclass(slots=True)
 class AppConfig:
     window: WindowConfig = field(default_factory=WindowConfig)
     poll: PollConfig = field(default_factory=PollConfig)
@@ -212,6 +234,7 @@ class AppConfig:
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     reply: ReplyConfig = field(default_factory=ReplyConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    db_parse: DbParseConfig = field(default_factory=DbParseConfig)
     state_dir: Path = field(
         default_factory=lambda: Path.home() / ".local" / "state" / "wechat-auto-reply"
     )
@@ -337,6 +360,7 @@ def load_config(path: Path) -> AppConfig:
             }
         ),
         safety=_load_dataclass(SafetyConfig, raw.get("safety")),
+        db_parse=_load_dataclass(DbParseConfig, raw.get("db_parse")),
         state_dir=Path(raw.get("state_dir", AppConfig().state_dir)),
         config_dir=Path(raw.get("config_dir", AppConfig().config_dir)),
     )

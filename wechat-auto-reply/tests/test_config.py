@@ -51,6 +51,12 @@ class ConfigTests(unittest.TestCase):
             self.assertFalse(config.experimental.history.enabled)
             self.assertEqual(config.downloads.root_dir, "/home/dgx/Documents/xwechat_files")
             self.assertEqual(config.attachments.explicit_send_extensions, ["txt", "md"])
+            self.assertEqual(config.db_parse.target_chat_title, "新技术讨论")
+            self.assertEqual(config.db_parse.sqlcipher_bin, "/usr/bin/sqlcipher")
+            self.assertEqual(config.db_parse.resolver_mode, "auto")
+            self.assertTrue(config.db_parse.memory_probe_use_sudo)
+            self.assertTrue(config.db_parse.popup_enabled)
+            self.assertEqual(config.db_parse.popup_cooldown_ms, 5000)
             self.assertEqual(config.reply.max_chars, 42)
             self.assertIn("验证码", config.reply.blacklist_keywords)
 

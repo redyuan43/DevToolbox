@@ -123,15 +123,16 @@ def _standalone_window_prompt(chat_name: str) -> str:
         "You are reading a standalone WeChat chat window screenshot.\n"
         "Return JSON only.\n"
         "Schema: {\"input_has_text\":false,\"send_button_enabled\":false,"
-        "\"items\":[{\"kind\":\"text|file|system\",\"direction\":\"inbound|outbound|unknown\","
+        "\"items\":[{\"kind\":\"text|file|image|system\",\"direction\":\"inbound|outbound|unknown\","
         "\"text_or_filename\":\"...\",\"confidence\":0.0,"
         "\"bbox\":{\"x\":0.0,\"y\":0.0,\"width\":0.0,\"height\":0.0},"
         "\"downloadable\":false,\"truncated\":false,\"from_self\":false}]}\n"
         f"The chat title is {chat_name!r}.\n"
         "Only read the visible conversation transcript area between the title bar and the input toolbar.\n"
         "Ignore side chrome, menus, title bar text, terminal windows behind it, and the bottom tool icons.\n"
-        "Use kind=text for normal chat bubbles, kind=file for visible file cards/documents, kind=system for timestamps or notices.\n"
-        "Use direction=outbound for right-side/self messages and direction=inbound for left-side/other-party messages.\n"
+        "Use kind=text for normal chat bubbles, kind=file for visible file cards/documents, kind=image for visible image/photo thumbnails, kind=system for timestamps or notices.\n"
+        "Use direction=outbound for self messages and direction=inbound for other-party messages.\n"
+        "Do not rely only on left/right position in group chats. Prefer bubble color and sender presentation: green or tinted self bubbles are outbound even if they are not on the far right; white/gray bubbles from other people are inbound.\n"
         "If a message or file card is partially cut off or obviously continues off screen, set truncated=true.\n"
         "bbox values are normalized ratios between 0 and 1 relative to the full screenshot.\n"
         "Return items in top-to-bottom visible order."
@@ -176,6 +177,41 @@ def _normalize_bbox(raw: Any) -> dict[str, float]:
         except (TypeError, ValueError):
             box[key] = 0.0
     return box
+
+
+def _average_rgb_for_bbox(screenshot_path: Path, bbox: dict[str, float]) -> tuple[float, float, float] | None:
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        image = Image.open(screenshot_path).convert("RGB")
+    except OSError:
+        return None
+    left = int(max(0.0, min(1.0, bbox.get("x", 0.0))) * image.width)
+    top = int(max(0.0, min(1.0, bbox.get("y", 0.0))) * image.height)
+    right = int(max(0.0, min(1.0, bbox.get("x", 0.0) + bbox.get("width", 0.0))) * image.width)
+    bottom = int(max(0.0, min(1.0, bbox.get("y", 0.0) + bbox.get("height", 0.0))) * image.height)
+    if right - left < 4 or bottom - top < 4:
+        return None
+    crop = image.crop((left, top, right, bottom))
+    pixels = list(crop.getdata())
+    if not pixels:
+        return None
+    return tuple(sum(pixel[index] for pixel in pixels) / len(pixels) for index in range(3))
+
+
+def _apply_color_direction_heuristics(screenshot_path: Path, items: list[MessageItem]) -> None:
+    for item in items:
+        if item.kind == "system":
+            continue
+        avg_rgb = _average_rgb_for_bbox(screenshot_path, item.bbox)
+        if not avg_rgb:
+            continue
+        red, green, blue = avg_rgb
+        if green >= red + 15.0 and green >= blue + 10.0 and green >= 150.0:
+            item.direction = "outbound"
+            item.from_self = True
 
 
 def analyze_chat_list(
@@ -262,6 +298,7 @@ def analyze_standalone_window(
             )
         except (TypeError, ValueError):
             continue
+    _apply_color_direction_heuristics(screenshot_path, items)
     return WindowObservation(
         chat_name=chat_name,
         input_has_text=bool(data.get("input_has_text")),

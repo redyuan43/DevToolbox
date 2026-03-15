@@ -59,6 +59,7 @@ class RuntimeState:
     last_message_items: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     recent_downloads: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     recent_sent_files: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    db_detector_state: dict[str, Any] = field(default_factory=dict)
     last_status: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -98,6 +99,7 @@ class RuntimeState:
                 str(k): list(v)
                 for k, v in data.get("recent_sent_files", {}).items()
             },
+            db_detector_state=dict(data.get("db_detector_state", {})),
             last_status=dict(data.get("last_status", {})),
         )
 
@@ -113,6 +115,7 @@ class RuntimeState:
             "last_message_items": self.last_message_items,
             "recent_downloads": self.recent_downloads,
             "recent_sent_files": self.recent_sent_files,
+            "db_detector_state": self.db_detector_state,
             "last_status": self.last_status,
         }
 

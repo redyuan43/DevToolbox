@@ -82,5 +82,21 @@ safety:
   require_confidence: 0.85
   dry_run: false
 
+db_parse:
+  enabled: false
+  target_chat_title: "项目讨论群"
+  sqlcipher_bin: "/usr/bin/sqlcipher"
+  hook_log_path: "/home/dgx/.local/state/wechat-auto-reply/db_hook.jsonl"
+  hook_library_path: "/home/dgx/.local/state/wechat-auto-reply/libwechat_db_hook.so"
+  debounce_ms: 500
+  account_dir: "auto"
+  resolver_mode: "memory"
+  memory_probe_use_sudo: true
+  memory_probe_timeout_s: 15
+  popup_enabled: true
+  popup_cooldown_ms: 5000
+  popup_existing_window_only: true
+  extract_non_text_metadata_only: true
+
 state_dir: "/home/dgx/.local/state/wechat-auto-reply"
 config_dir: "/home/dgx/.config/wechat-auto-reply"

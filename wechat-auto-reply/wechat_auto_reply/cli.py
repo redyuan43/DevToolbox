@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .config import AppConfig, default_config_path, load_config
+from .dbdetect import DbDetectService
 from .service import AutoReplyService
 from .state import StateStore
 
@@ -19,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to config.yaml",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ["calibrate", "once", "daemon", "pause", "resume", "status"]:
+    for command in ["calibrate", "once", "daemon", "pause", "resume", "status", "db-detect", "db-detect-once", "db-status"]:
         subparsers.add_parser(command)
     send_text = subparsers.add_parser("send-text")
     send_text.add_argument("--chat", required=True, help="Standalone chat window title")
@@ -46,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     config, store = load_app(args.config)
     service = AutoReplyService(config, store)
+    db_service = DbDetectService(config, store)
 
     if args.command == "calibrate":
         calibration = service.calibrate()
@@ -65,6 +67,14 @@ def main(argv: list[str] | None = None) -> int:
         service.run_daemon()
         return 0
 
+    if args.command == "db-detect":
+        db_service.run_daemon()
+        return 0
+
+    if args.command == "db-detect-once":
+        print(json.dumps(db_service.run_once(), ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "pause":
         config.pause_flag_path.touch()
         print("paused")
@@ -77,6 +87,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "status":
         print(json.dumps(service.status(), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "db-status":
+        print(json.dumps(db_service.status(), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "send-file":
