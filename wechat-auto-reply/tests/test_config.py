@@ -49,7 +49,7 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue(config.ollama.disable_thinking)
             self.assertEqual(config.history.max_pages, 1)
             self.assertFalse(config.experimental.history.enabled)
-            self.assertEqual(config.downloads.root_dir, "/home/dgx/Documents/xwechat_files")
+            self.assertEqual(config.downloads.root_dir, str(Path.home() / "Documents" / "xwechat_files"))
             self.assertEqual(config.attachments.explicit_send_extensions, ["txt", "md"])
             self.assertEqual(config.db_parse.target_chat_title, "新技术讨论")
             self.assertEqual(config.db_parse.sqlcipher_bin, "/usr/bin/sqlcipher")

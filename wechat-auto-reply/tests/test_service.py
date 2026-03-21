@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from wechat_auto_reply.config import (
     AppConfig,
+    AttachmentsConfig,
     ExperimentalConfig,
     GuardConfig,
     GuardContextConfig,
@@ -17,6 +18,8 @@ from wechat_auto_reply.config import (
     HistoryConfig,
     OllamaConfig,
     SafetyConfig,
+    ToolsConfig,
+    ToolsSendFileConfig,
     WindowConfig,
 )
 from wechat_auto_reply.service import AutoReplyService
@@ -187,6 +190,42 @@ class StandaloneServiceTests(unittest.TestCase):
                 service.run_once()
 
             self.assertEqual(scroll_mock.call_count, 0)
+
+    def test_toolbar_file_button_point_uses_window_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service, _ = self._build_service(tmp)
+            window = WindowInfo("0x1", "Ivan", "wechat", 100, 200, 600, 640)
+
+            x, y = service._toolbar_file_button_point(window)
+
+            self.assertEqual((x, y), (208, 700))
+
+    def test_send_file_uses_control_flow_without_visual_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service, _ = self._build_service(tmp)
+            file_path = Path(tmp) / "photo.jpg"
+            file_path.write_bytes(b"img")
+            service.config.tools = ToolsConfig(
+                send_file=ToolsSendFileConfig(
+                    enabled=True,
+                    attachments=AttachmentsConfig(
+                        explicit_send_extensions=["jpg", "jpeg", "png"],
+                        chooser_open_delay_ms=0,
+                        post_send_delay_ms=0,
+                    ),
+                )
+            )
+            chat_window = WindowInfo("0x1", "Ivan", "wechat", 10, 20, 598, 640)
+
+            with (
+                patch.object(service, "_find_chat_window", return_value=chat_window),
+                patch.object(service, "_send_file_via_controls") as send_mock,
+            ):
+                result = service.send_file("Ivan", file_path)
+
+            send_mock.assert_called_once_with(chat_window, file_path.resolve())
+            self.assertEqual(result["path"], str(file_path.resolve()))
+            self.assertNotIn("verify_confidence", result)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -12,7 +13,9 @@ from .config import Roi, WindowConfig
 
 
 WINDOW_RE = re.compile(
-    r"^\s*(0x[0-9a-f]+)\s+\"(?P<title>[^\"]*)\":\s+\(\"(?P<class1>[^\"]*)\"\s+\"(?P<class2>[^\"]*)\"\)\s+(?P<width>\d+)x(?P<height>\d+)\+(?P<x>-?\d+)\+(?P<y>-?\d+)"
+    r"^\s*(0x[0-9a-f]+)\s+\"(?P<title>[^\"]*)\":\s+\(\"(?P<class1>[^\"]*)\"\s+\"(?P<class2>[^\"]*)\"\)\s+"
+    r"(?P<width>\d+)x(?P<height>\d+)\+(?P<rel_x>-?\d+)\+(?P<rel_y>-?\d+)"
+    r"(?:\s+\+(?P<abs_x>-?\d+)\+(?P<abs_y>-?\d+))?"
 )
 
 
@@ -49,7 +52,7 @@ def _run(command: list[str], env: dict[str, str]) -> str:
     return result.stdout.strip()
 
 
-def parse_wechat_windows(output: str, class_name: str) -> list[WindowInfo]:
+def parse_windows(output: str, class_name: str | None = None) -> list[WindowInfo]:
     matches: list[WindowInfo] = []
     for line in output.splitlines():
         raw = WINDOW_RE.match(line)
@@ -57,15 +60,15 @@ def parse_wechat_windows(output: str, class_name: str) -> list[WindowInfo]:
             continue
         current_class_name = raw.group("class1") or raw.group("class2")
         title = raw.group("title")
-        if current_class_name != class_name:
+        if class_name and current_class_name != class_name:
             continue
         matches.append(
             WindowInfo(
                 window_id=raw.group(1),
                 title=title,
                 class_name=current_class_name,
-                x=int(raw.group("x")),
-                y=int(raw.group("y")),
+                x=int(raw.group("abs_x") or raw.group("rel_x")),
+                y=int(raw.group("abs_y") or raw.group("rel_y")),
                 width=int(raw.group("width")),
                 height=int(raw.group("height")),
             )
@@ -73,11 +76,19 @@ def parse_wechat_windows(output: str, class_name: str) -> list[WindowInfo]:
     return matches
 
 
-def list_wechat_windows(window: WindowConfig) -> list[WindowInfo]:
+def parse_wechat_windows(output: str, class_name: str) -> list[WindowInfo]:
+    return parse_windows(output, class_name=class_name)
+
+
+def list_windows(window: WindowConfig, class_name: str | None = None) -> list[WindowInfo]:
     env = x11_env(window)
     output = _run(["xwininfo", "-root", "-tree"], env)
-    matches = parse_wechat_windows(output, window.class_name)
+    matches = parse_windows(output, class_name)
     return sorted(matches, key=lambda item: item.width * item.height, reverse=True)
+
+
+def list_wechat_windows(window: WindowConfig) -> list[WindowInfo]:
+    return list_windows(window, class_name=window.class_name)
 
 
 def _dedupe_by_title(windows: Iterable[WindowInfo]) -> list[WindowInfo]:
@@ -133,7 +144,12 @@ def key(keyspec: str, window: WindowConfig) -> None:
 
 def paste_text(text: str, window: WindowConfig) -> None:
     env = x11_env(window)
-    subprocess.run(["xsel", "--clipboard", "--input"], check=True, text=True, input=text, env=env)
+    clipboard_command = ["xsel", "--clipboard", "--input"]
+    if shutil.which("xsel") is None:
+        if shutil.which("xclip") is None:
+            raise RuntimeError("clipboard_tool_not_found")
+        clipboard_command = ["xclip", "-selection", "clipboard"]
+    subprocess.run(clipboard_command, check=True, text=True, input=text, env=env)
     subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], check=True, env=env)
 
 

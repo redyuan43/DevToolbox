@@ -15,13 +15,16 @@ SAMPLE_TREE = """
      0x62002a1 "Ivan": ("wechat" "wechat") 598x640+158+136  +158+136
      0x62002a2 "Jing": ("wechat" "wechat") 598x640+200+160  +200+160
      0x62002a3 "Other": ("wechat" "wechat") 500x400+300+220  +300+220
+     0x62002a4 "Open": ("wechat" "wechat") 621x415+14+49  +2716+537
 """
 
 
 class X11WindowDiscoveryTests(unittest.TestCase):
     def test_parse_wechat_windows(self) -> None:
         windows = parse_wechat_windows(SAMPLE_TREE, "wechat")
-        self.assertEqual([item.title for item in windows], ["Weixin", "Ivan", "Jing", "Other"])
+        self.assertEqual([item.title for item in windows], ["Weixin", "Ivan", "Jing", "Other", "Open"])
+        chooser = next(item for item in windows if item.title == "Open")
+        self.assertEqual((chooser.x, chooser.y), (2716, 537))
 
     def test_discover_standalone_windows_filters_main_and_whitelist(self) -> None:
         config = WindowConfig(

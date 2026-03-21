@@ -1,9 +1,10 @@
 # Ubuntu X11 Window Split Tools
 
-这个目录提供五个面向 Ubuntu GNOME X11 的窗口平铺/聚焦/配置脚本：
+这个目录提供六个面向 Ubuntu GNOME X11 的窗口平铺/聚焦/配置脚本：
 
 - `split3.sh`: 将当前显示器上的窗口平铺为 1 到 3 列
 - `split6.sh`: 将当前显示器固定为 `3 列 x 2 行` 网格，并支持后台守护模式
+- `split6_recorded.sh`: 按 2026-03-14 当前桌面录制的 6 终端布局恢复窗口位置
 - `split16.sh`: 将当前显示器固定为 `4 列 x 3 行` 网格（最多 12 个槽位）
 - `focus_split6_slot.sh`: 聚焦六分屏中的某个槽位，并把鼠标移动到该槽位中心
 - `export_split6_hotkeys.sh`: 导出当前 `split6` 相关 GNOME 快捷键备份
@@ -28,6 +29,13 @@
 - 支持一次性整理窗口，或使用守护进程自动补位
 - 支持 `--daemon`、`--status`、`--stop`、`--dry-run`、`--verbose`
 - 内部边界留有轻微重叠，用来遮住 GNOME 窗口阴影缝隙
+
+### split6_recorded.sh
+
+- 只处理终端类窗口
+- 使用当前录制下来的 6 槽位布局，右侧区域保持空出
+- 超过 6 个终端时，只移动最靠左的 6 个
+- 支持 `--dry-run` 和 `--verbose`
 
 ### split16.sh
 
@@ -80,7 +88,7 @@ sudo apt install -y xdotool x11-utils x11-xserver-utils
 
 ```bash
 cd /home/dgx/github/DevToolbox/spilt_screens
-chmod +x split3.sh split6.sh focus_split6_slot.sh configure_split6_hotkeys.sh export_split6_hotkeys.sh
+chmod +x split3.sh split6.sh split6_recorded.sh focus_split6_slot.sh configure_split6_hotkeys.sh export_split6_hotkeys.sh
 chmod +x split16.sh
 ```
 
@@ -89,6 +97,7 @@ chmod +x split16.sh
 ```bash
 ./split3.sh
 ./split6.sh
+./split6_recorded.sh
 ./split16.sh
 ```
 
@@ -103,6 +112,7 @@ chmod +x split16.sh
 ```bash
 ./split3.sh --dry-run
 ./split6.sh --dry-run
+./split6_recorded.sh --dry-run
 ./split16.sh --dry-run
 ```
 
@@ -111,6 +121,7 @@ chmod +x split16.sh
 ```bash
 ./split3.sh --verbose
 ./split6.sh --verbose
+./split6_recorded.sh --verbose
 ./split16.sh --verbose
 ```
 
@@ -196,6 +207,21 @@ chmod +x split16.sh
 - PID 文件：`~/.cache/split6/daemon.pid`
 - 状态文件：`~/.cache/split6/state.env`
 - 日志文件：`~/.cache/split6/daemon.log`
+
+## split6_recorded.sh 用法
+
+命令：
+
+```bash
+./split6_recorded.sh [--dry-run] [--verbose] [--help]
+```
+
+行为：
+
+- 使用当前活动窗口判断目标显示器
+- 只收集当前工作区、当前显示器上的终端类窗口
+- 会把录制时的布局按当前工作区比例做缩放
+- 如果终端超过 6 个，只移动最靠左的 6 个
 
 ## split16.sh 用法
 

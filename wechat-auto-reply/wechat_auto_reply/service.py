@@ -20,11 +20,9 @@ from .vision import (
     analyze_conversation,
     analyze_standalone_window,
     click_point_for_candidate,
-    locate_attachment_button,
     locate_context_action,
     pick_candidate,
     verify_reply_visible,
-    verify_visible,
 )
 from .x11 import (
     UserInputMonitor,
@@ -37,6 +35,7 @@ from .x11 import (
     discover_standalone_windows,
     discover_wechat_window,
     key,
+    list_windows,
     list_wechat_windows,
     paste_and_send,
     paste_text,
@@ -47,6 +46,8 @@ from .x11 import (
 
 
 DOWNLOAD_LABEL = "下载"
+FILE_CHOOSER_TITLE_HINTS = ("Open", "打开", "Select File", "Select Files", "File Upload")
+FILE_CHOOSER_CLASS_HINTS = ("GtkFileChooserDialog", "org.gnome.Nautilus", "Nautilus")
 
 
 @dataclass(slots=True)
@@ -217,18 +218,6 @@ class AutoReplyService:
         window = self._find_chat_window(chat_name)
         if not window:
             raise RuntimeError(f"Standalone chat window not found: {chat_name}")
-
-        env = x11_env(self.config.window)
-        screenshot = capture_window(window.window_id, env)
-        found, x_ratio, y_ratio, confidence = locate_attachment_button(
-            self.client,
-            self.config,
-            screenshot,
-        )
-        if not found or confidence < 0.5:
-            x_ratio, y_ratio = self._fallback_attachment_point(window)
-
-        attach_x, attach_y = self._ratio_to_abs(window, x_ratio, y_ratio)
         self._audit_tools(
             {
                 "event": "file_send_started",
@@ -238,37 +227,18 @@ class AutoReplyService:
             }
         )
 
-        activate_window(window.window_id, self.config.window)
-        click(attach_x, attach_y, self.config.window)
-        time.sleep(self.config.attachments.chooser_open_delay_ms / 1000.0)
-        key("ctrl+l", self.config.window)
-        time.sleep(0.1)
-        paste_text(str(path), self.config.window)
-        time.sleep(0.1)
-        key("Return", self.config.window)
-        time.sleep(0.2)
-        key("Return", self.config.window)
-        time.sleep(self.config.attachments.post_send_delay_ms / 1000.0)
-
-        verify_capture = capture_window(window.window_id, env)
-        visible, verify_confidence = verify_visible(
-            self.client,
-            self.config,
-            verify_capture,
-            path.name,
-            target_kind="file",
-        )
-        if not visible:
+        try:
+            self._send_file_via_controls(window, path)
+        except Exception:
             self._audit_tools(
                 {
                     "event": "file_send_failed",
                     "chat_name": chat_name,
                     "path": str(path),
-                    "verify_confidence": verify_confidence,
                 }
             )
             self.store.save()
-            raise RuntimeError("file_send_verify_failed")
+            raise
 
         fingerprint = _file_fingerprint(chat_name, path.name)
         self.store.remember_outbound_file(chat_name, fingerprint)
@@ -278,14 +248,12 @@ class AutoReplyService:
                 "event": "file_send_completed",
                 "chat_name": chat_name,
                 "path": str(path),
-                "verify_confidence": verify_confidence,
             }
         )
         self.store.save()
         return {
             "chat_name": chat_name,
             "path": str(path),
-            "verify_confidence": verify_confidence,
         }
 
     def run_once(self) -> CycleResult:
@@ -1141,3 +1109,77 @@ class AutoReplyService:
         x_ratio = ((input_roi.x - window.x) + max(80, int(input_roi.width * 0.18))) / window.width
         y_ratio = ((input_roi.y - window.y) + max(24, int(input_roi.height * 0.24))) / window.height
         return x_ratio, y_ratio
+
+    def _send_file_via_controls(self, chat_window: WindowInfo, file_path: Path) -> None:
+        folder_x, folder_y = self._toolbar_file_button_point(chat_window)
+        activate_window(chat_window.window_id, self.config.window)
+        click(folder_x, folder_y, self.config.window)
+        time.sleep(self.config.attachments.chooser_open_delay_ms / 1000.0)
+
+        chooser = self._wait_for_window_title(FILE_CHOOSER_TITLE_HINTS, timeout_s=3.0)
+        if not chooser:
+            key("ctrl+o", self.config.window)
+            time.sleep(0.4)
+            chooser = self._wait_for_window_title(FILE_CHOOSER_TITLE_HINTS, timeout_s=2.0)
+        if not chooser:
+            raise RuntimeError("file_chooser_not_found")
+
+        activate_window(chooser.window_id, self.config.window)
+        time.sleep(0.1)
+        key("alt+n", self.config.window)
+        time.sleep(0.05)
+        key("ctrl+a", self.config.window)
+        time.sleep(0.05)
+        key("BackSpace", self.config.window)
+        time.sleep(0.05)
+        paste_text(str(file_path), self.config.window)
+        time.sleep(0.1)
+        key("alt+o", self.config.window)
+        time.sleep(0.3)
+        activate_window(chat_window.window_id, self.config.window)
+        time.sleep(0.1)
+        key("Return", self.config.window)
+        time.sleep(self.config.attachments.post_send_delay_ms / 1000.0)
+
+    def _toolbar_file_button_point(self, window: WindowInfo) -> tuple[int, int]:
+        input_roi = derive_standalone_rois(window)["input"]
+        x = input_roi.x + max(104, int(input_roi.width * 0.18))
+        y = input_roi.y + max(10, int(input_roi.height * 0.06))
+        return x, y
+
+    def _title_matches(self, title: str, expected: str) -> bool:
+        normalized_title = re.sub(r"\s+", " ", (title or "").strip()).lower()
+        normalized_expected = re.sub(r"\s+", " ", (expected or "").strip()).lower()
+        if not normalized_title or not normalized_expected:
+            return False
+        if normalized_title == normalized_expected:
+            return True
+        if normalized_expected in {"open", "打开"}:
+            return any(
+                alias in normalized_title
+                for alias in ("open", "打开", "select file", "select files", "file upload")
+            )
+        return normalized_expected in normalized_title
+
+    def _looks_like_file_chooser_title(self, title: str) -> bool:
+        normalized_title = re.sub(r"\s+", " ", (title or "").strip()).lower()
+        return any(alias in normalized_title for alias in ("open", "打开", "select file", "select files", "file upload"))
+
+    def _find_window_by_title(self, title: str | tuple[str, ...]) -> WindowInfo | None:
+        candidates = (title,) if isinstance(title, str) else title
+        for class_name in (*FILE_CHOOSER_CLASS_HINTS, None):
+            for window in list_windows(self.config.window, class_name=class_name):
+                if any(self._title_matches(window.title, item) for item in candidates):
+                    return window
+                if self._looks_like_file_chooser_title(window.title):
+                    return window
+        return None
+
+    def _wait_for_window_title(self, title: str | tuple[str, ...], timeout_s: float) -> WindowInfo | None:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            chooser = self._find_window_by_title(title)
+            if chooser:
+                return chooser
+            time.sleep(0.1)
+        return None
