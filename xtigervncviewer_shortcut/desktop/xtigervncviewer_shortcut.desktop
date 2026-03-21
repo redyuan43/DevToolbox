@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TigerVNC Viewer
+Comment=Prompt for VNC host/display and launch TigerVNC Viewer
+Exec=/usr/bin/env bash __INSTALL_DIR__/xtigervncviewer_shortcut.sh
+Icon=network-workgroup
+Terminal=false
+StartupNotify=true
+Categories=Network;RemoteAccess;
