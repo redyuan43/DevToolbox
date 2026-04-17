@@ -21,6 +21,13 @@ DevToolbox/
 │   └── ...                            # 其他配置和文档
 ├── chrome-automation/                  # 🌐 Chrome 自动化工具
 │   └── start-chrome-with-profile.sh
+├── android-tablet-second-screen/       # 📱 安卓平板第二屏工具
+│   ├── scripts/start_second_screen_stream.sh
+│   ├── scripts/stop_second_screen_stream.sh
+│   ├── scripts/second_screen_status.sh
+│   ├── docs/vkms-virtual-monitor.md
+│   ├── docs/tablet-workspace.md
+│   └── skill-src/android-tablet-sunshine-moonlight-ubuntu/
 ├── spilt_screens/                      # 🪟 X11 窗口平铺脚本
 │   ├── split3.sh                      # 1-3 窗口横向平铺
 │   ├── split6.sh                      # 3x2 固定网格 + 守护模式
@@ -89,6 +96,28 @@ cd photo-sync-project
 - **使用方法**: `./start-chrome-with-profile.sh`
 - **端口**: 9222
 - **配置目录**: `C:\ChromeDebugProfile`
+
+### 📱 安卓平板第二屏 (android-tablet-second-screen/)
+
+#### Ubuntu 24 X11 + Android 平板 + Sunshine/Moonlight + VKMS
+- **功能**:
+  - 重启后自动恢复 `vkms` 虚拟副屏
+  - 一键重启 Sunshine 并恢复到可串流状态
+  - 通过 `adb` 读取平板真实分辨率
+  - 下载并安装 Moonlight / AVNC
+  - 保留 TigerVNC 独立桌面作为无 fake HDMI 时的备用路径
+- **主要脚本**:
+  - `scripts/start_second_screen_stream.sh`：恢复虚拟副屏并重启 Sunshine
+  - `scripts/stop_second_screen_stream.sh`：停止 Sunshine 并关闭虚拟副屏
+  - `scripts/second_screen_status.sh`：汇总 ADB、显示器和 Sunshine 状态
+- **附带 skill 源**:
+  - `skill-src/android-tablet-sunshine-moonlight-ubuntu/`
+  - 可直接同步到 `my-skills-repo` 作为可发布技能
+- **快速使用**:
+  ```bash
+  cd android-tablet-second-screen
+  ./scripts/start_second_screen_stream.sh --launch-moonlight
+  ```
 
 ### 🪟 窗口平铺工具 (spilt_screens/)
 
