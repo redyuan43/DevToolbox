@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf 'clipshot-send: %s\n' "$*" >&2
+  command -v notify-send >/dev/null 2>&1 && notify-send "Clipshot" "$*" || true
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  clipshot-send [--paste] [SSH_HOST]
+
+Find the current local screenshot, copy it to the SSH host with scp, and put
+the remote latest.png path into the local clipboard.
+With --paste, also send Ctrl+Shift+V to the current focused window.
+
+Default SSH_HOST: nx1
+
+Environment:
+  CLIPSHOT_REMOTE_DIR                 Default: Pictures/ssh-screenshots
+  CLIPSHOT_SCREENSHOT_MAX_AGE_SECONDS Default: 900
+  CLIPSHOT_PASTE_DELAY_SECONDS        Default: 0.5
+EOF
+}
+
+setup_gui_env() {
+  local runtime_dir line
+  runtime_dir=${XDG_RUNTIME_DIR:-"/run/user/$(id -u)"}
+  export XDG_RUNTIME_DIR="$runtime_dir"
+  export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-"unix:path=$runtime_dir/bus"}
+
+  if command -v systemctl >/dev/null 2>&1; then
+    while IFS= read -r line; do
+      case "$line" in
+        WAYLAND_DISPLAY=*|DISPLAY=*|XDG_CURRENT_DESKTOP=*|XDG_SESSION_TYPE=*|DBUS_SESSION_BUS_ADDRESS=*)
+          export "$line"
+          ;;
+      esac
+    done < <(systemctl --user show-environment 2>/dev/null || true)
+  fi
+
+  export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
+}
+
+find_recent_screenshot() {
+  local max_age now candidate candidate_mtime
+  max_age=${CLIPSHOT_SCREENSHOT_MAX_AGE_SECONDS:-900}
+  now=$(date +%s)
+  candidate=$(
+    {
+      [ -d "$HOME/Pictures/Screenshots" ] && find "$HOME/Pictures/Screenshots" -maxdepth 1 -type f -iname '*.png' -printf '%T@ %p\n'
+      [ -d "$HOME/Pictures" ] && find "$HOME/Pictures" -maxdepth 1 -type f -iname '*.png' -printf '%T@ %p\n'
+      [ -d "$HOME/图片/截图" ] && find "$HOME/图片/截图" -maxdepth 1 -type f -iname '*.png' -printf '%T@ %p\n'
+      [ -d "$HOME/图片" ] && find "$HOME/图片" -maxdepth 1 -type f -iname '*.png' -printf '%T@ %p\n'
+    } 2>/dev/null | sort -nr | head -n 1 | cut -d ' ' -f 2-
+  )
+  [ -n "$candidate" ] || return 1
+  candidate_mtime=$(stat -c '%Y' "$candidate" 2>/dev/null) || return 1
+  [ $((now - candidate_mtime)) -le "$max_age" ] || return 1
+  printf '%s\n' "$candidate"
+}
+
+copy_text_to_clipboard() {
+  command -v wl-copy >/dev/null 2>&1 || die "wl-copy is required to update the local clipboard"
+  printf '%s' "$1" | wl-copy --type text/plain
+}
+
+paste_after_copy=0
+host=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --paste)
+      paste_after_copy=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "unknown argument: $1"
+      ;;
+    *)
+      if [ -n "$host" ]; then
+        die "unexpected extra argument: $1"
+      fi
+      host=$1
+      shift
+      ;;
+  esac
+done
+[ "$#" -eq 0 ] || die "unexpected extra argument: $1"
+host=${host:-nx1}
+
+paste_clipboard_to_focused_window() {
+  command -v ydotool >/dev/null 2>&1 || die "ydotool is required for --paste"
+  sleep "${CLIPSHOT_PASTE_DELAY_SECONDS:-0.5}"
+
+  # Release common modifiers first, so the global shortcut keys do not leak into the paste chord.
+  ydotool key 29:0 97:0 42:0 54:0 56:0 100:0 125:0 126:0 47:0 >/dev/null 2>&1 || true
+  ydotool key 29:1 42:1 47:1 47:0 42:0 29:0 >/dev/null
+}
+
+command -v ssh >/dev/null 2>&1 || die "ssh is required"
+command -v scp >/dev/null 2>&1 || die "scp is required"
+setup_gui_env
+
+tmp_file=$(mktemp --suffix=.png)
+cleanup() {
+  rm -f "$tmp_file"
+}
+trap cleanup EXIT
+
+if command -v wl-paste >/dev/null 2>&1 && wl-paste --list-types 2>/dev/null | grep -qx 'image/png'; then
+  wl-paste --type image/png > "$tmp_file"
+else
+  recent_screenshot=$(find_recent_screenshot) || die "clipboard has no image/png and no recent screenshot file was found"
+  cp "$recent_screenshot" "$tmp_file"
+fi
+
+[ -s "$tmp_file" ] || die "screenshot is empty"
+if command -v file >/dev/null 2>&1; then
+  file -b --mime-type "$tmp_file" | grep -qx 'image/png' || die "screenshot is not PNG"
+fi
+
+remote_home=$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$host" 'printf %s "$HOME"') || die "failed to read remote HOME from $host"
+remote_dir="$remote_home/${CLIPSHOT_REMOTE_DIR:-Pictures/ssh-screenshots}"
+timestamp=$(date '+%Y%m%d-%H%M%S')
+remote_archive="$remote_dir/archive/shot-${timestamp}.png"
+remote_latest="$remote_dir/latest.png"
+
+ssh -o BatchMode=yes -o ConnectTimeout=8 "$host" "mkdir -p '$remote_dir/archive'" || die "failed to create remote directory"
+scp -q "$tmp_file" "$host:$remote_archive" || die "failed to scp screenshot to $host"
+ssh -o BatchMode=yes -o ConnectTimeout=8 "$host" "cp '$remote_archive' '$remote_latest'" || die "failed to update remote latest.png"
+
+copy_text_to_clipboard "$remote_latest"
+printf '%s\n' "$remote_latest"
+if [ "$paste_after_copy" -eq 1 ]; then
+  paste_clipboard_to_focused_window
+fi
+command -v notify-send >/dev/null 2>&1 && notify-send "Clipshot" "Copied remote path: $remote_latest" || true

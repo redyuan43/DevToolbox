@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf 'clipshot-pull: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  clipshot-pull
+
+Pull the latest shared screenshot from the local Ubuntu/Tailscale source into
+this SSH host, then print the remote absolute path.
+
+Environment:
+  CLIPSHOT_SOURCE       Source SSH target. Default: ivan@ivan-tm1613.taild500c8.ts.net
+  CLIPSHOT_SOURCE_PATH  Source PNG path. Default: ~/.local/share/clipshot/latest.png
+  CLIPSHOT_DEST_DIR     Destination directory. Default: ~/Pictures/ssh-screenshots
+  CLIPSHOT_PRINT_PATH   latest or archive. Default: latest
+  CLIPSHOT_SCP_OPTS     Extra scp options appended after the safe defaults.
+EOF
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  "")
+    ;;
+  *)
+    die "unknown argument: $1"
+    ;;
+esac
+
+command -v scp >/dev/null 2>&1 || die "scp is required"
+
+source_target=${CLIPSHOT_SOURCE:-"ivan@ivan-tm1613.taild500c8.ts.net"}
+source_path=${CLIPSHOT_SOURCE_PATH:-"~/.local/share/clipshot/latest.png"}
+dest_dir=${CLIPSHOT_DEST_DIR:-"$HOME/Pictures/ssh-screenshots"}
+print_path=${CLIPSHOT_PRINT_PATH:-latest}
+scp_opts=(-q -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8)
+if [ -n "${CLIPSHOT_SCP_OPTS:-}" ]; then
+  # shellcheck disable=SC2206
+  extra_scp_opts=(${CLIPSHOT_SCP_OPTS})
+  scp_opts+=("${extra_scp_opts[@]}")
+fi
+
+mkdir -p "$dest_dir"
+timestamp=$(date '+%Y%m%d-%H%M%S')
+archive_dir="$dest_dir/archive"
+dest_file="$archive_dir/shot-${timestamp}.png"
+latest_file="$dest_dir/latest.png"
+tmp_file=$(mktemp --tmpdir="$dest_dir" ".shot.${timestamp}.XXXXXX.png")
+
+cleanup() {
+  [ -f "$tmp_file" ] && rm -f "$tmp_file"
+}
+trap cleanup EXIT
+
+scp "${scp_opts[@]}" "${source_target}:${source_path}" "$tmp_file" || die "failed to pull latest screenshot from $source_target"
+[ -s "$tmp_file" ] || die "downloaded screenshot is empty"
+if command -v file >/dev/null 2>&1; then
+  file -b --mime-type "$tmp_file" | grep -qx 'image/png' || die "downloaded data is not PNG"
+fi
+
+mkdir -p "$archive_dir"
+cp "$tmp_file" "$dest_file"
+mv "$tmp_file" "$latest_file"
+trap - EXIT
+case "$print_path" in
+  latest)
+    printf '%s\n' "$latest_file"
+    ;;
+  archive)
+    printf '%s\n' "$dest_file"
+    ;;
+  *)
+    die "CLIPSHOT_PRINT_PATH must be latest or archive"
+    ;;
+esac

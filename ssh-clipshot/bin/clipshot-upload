@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf 'clipshot-upload: %s\n' "$*" >&2
+  command -v notify-send >/dev/null 2>&1 && notify-send "Clipshot" "$*" || true
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  clipshot-upload [--file PNG_PATH]
+
+Read a PNG image from the local Wayland clipboard and update the shared
+clipshot directory. --file is mainly for testing and imports an existing PNG.
+EOF
+}
+
+find_recent_screenshot() {
+  local max_age now candidate candidate_mtime
+  max_age=${CLIPSHOT_SCREENSHOT_MAX_AGE_SECONDS:-900}
+  now=$(date +%s)
+  candidate=$(
+    {
+      [ -d "$HOME/Pictures/Screenshots" ] && find "$HOME/Pictures/Screenshots" -maxdepth 1 -type f -iname '*.png' -printf '%T@ %p\n'
+      [ -d "$HOME/Pictures" ] && find "$HOME/Pictures" -maxdepth 1 -type f -iname '*.png' -printf '%T@ %p\n'
+      [ -d "$HOME/图片/截图" ] && find "$HOME/图片/截图" -maxdepth 1 -type f -iname '*.png' -printf '%T@ %p\n'
+      [ -d "$HOME/图片" ] && find "$HOME/图片" -maxdepth 1 -type f -iname '*.png' -printf '%T@ %p\n'
+    } 2>/dev/null | sort -nr | head -n 1 | cut -d ' ' -f 2-
+  )
+  [ -n "$candidate" ] || return 1
+  candidate_mtime=$(stat -c '%Y' "$candidate" 2>/dev/null) || return 1
+  [ $((now - candidate_mtime)) -le "$max_age" ] || return 1
+  printf '%s\n' "$candidate"
+}
+
+setup_gui_env() {
+  local runtime_dir
+  runtime_dir=${XDG_RUNTIME_DIR:-"/run/user/$(id -u)"}
+  export XDG_RUNTIME_DIR="$runtime_dir"
+  export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-"unix:path=$runtime_dir/bus"}
+
+  if command -v systemctl >/dev/null 2>&1; then
+    local line
+    while IFS= read -r line; do
+      case "$line" in
+        WAYLAND_DISPLAY=*|DISPLAY=*|XDG_CURRENT_DESKTOP=*|XDG_SESSION_TYPE=*|DBUS_SESSION_BUS_ADDRESS=*)
+          export "$line"
+          ;;
+      esac
+    done < <(systemctl --user show-environment 2>/dev/null || true)
+  fi
+
+  export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
+}
+
+input_file=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --file)
+      [ "$#" -ge 2 ] || die "--file requires a path"
+      input_file=$2
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+done
+
+share_dir=${CLIPSHOT_SHARE_DIR:-"$HOME/.local/share/clipshot"}
+mkdir -p "$share_dir/archive"
+
+timestamp=$(date '+%Y%m%d-%H%M%S')
+tmp_file=$(mktemp --tmpdir="$share_dir" ".latest.${timestamp}.XXXXXX.png")
+archive_file="$share_dir/archive/shot-${timestamp}.png"
+latest_file="$share_dir/latest.png"
+latest_meta="$share_dir/latest.txt"
+
+cleanup() {
+  [ -f "$tmp_file" ] && rm -f "$tmp_file"
+}
+trap cleanup EXIT
+
+if [ -n "$input_file" ]; then
+  [ -r "$input_file" ] || die "cannot read file: $input_file"
+  cp "$input_file" "$tmp_file"
+else
+  setup_gui_env
+  command -v wl-paste >/dev/null 2>&1 || die "wl-paste is required"
+  if wl-paste --list-types 2>/dev/null | grep -qx 'image/png'; then
+    wl-paste --type image/png > "$tmp_file"
+  else
+    recent_screenshot=$(find_recent_screenshot) || die "clipboard does not contain image/png and no recent screenshot file was found"
+    cp "$recent_screenshot" "$tmp_file"
+  fi
+fi
+
+[ -s "$tmp_file" ] || die "captured image is empty"
+if command -v file >/dev/null 2>&1; then
+  file -b --mime-type "$tmp_file" | grep -qx 'image/png' || die "captured data is not PNG"
+fi
+
+cp "$tmp_file" "$archive_file"
+mv "$tmp_file" "$latest_file"
+trap - EXIT
+
+printf '%s\n' "$archive_file" > "$latest_meta"
+printf '%s\n' "$latest_file"
+command -v notify-send >/dev/null 2>&1 && notify-send "Clipshot" "Shared screenshot updated" || true

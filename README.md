@@ -32,6 +32,10 @@ DevToolbox/
 │   ├── split3.sh                      # 1-3 窗口横向平铺
 │   ├── split6.sh                      # 3x2 固定网格 + 守护模式
 │   └── README.md                      # 使用说明
+├── ssh-clipshot/                       # 📋 SSH 截图路径粘贴工具
+│   ├── bin/clipshot-send              # scp 截图到 SSH 远端并复制路径
+│   ├── install-local.sh               # 本机安装和 GNOME 快捷键
+│   └── README.md                      # 使用说明
 ├── image-processing/                   # 🖼️ 图像处理工具
 │   └── process_image.py
 ├── wechat-auto-reply/                  # 💬 Ubuntu 微信自动回复工具
@@ -137,6 +141,20 @@ cd photo-sync-project
   cd spilt_screens
   ./split3.sh
   ./split6.sh --daemon
+  ```
+
+### 📋 SSH 截图路径粘贴 (ssh-clipshot/)
+
+#### clipshot-send
+- **功能**: 把本机截图用真实 `scp` 发送到 SSH 远端，并把远端图片路径写入本机剪贴板。
+- **默认目标**: `nx1`
+- **默认远端路径**: `/home/nx/Pictures/ssh-screenshots/latest.png`
+- **一键模式**: `Super+Ctrl+V` 可触发 `clipshot-send --paste nx1`，完成发送后自动向当前焦点终端粘贴路径。
+- **快速使用**:
+  ```bash
+  cd ssh-clipshot
+  ./install-local.sh --shortcut
+  clipshot-send nx1
   ```
 
 ### 🗣️ 小米音箱 TTS 系统 (xiaomi_tts_project/)
