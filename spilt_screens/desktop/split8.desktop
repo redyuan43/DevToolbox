@@ -1,9 +1,9 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Split 3
-Comment=Arrange existing windows into 3 columns
-Exec=/home/ivan/github/DevToolbox/spilt_screens/split.sh --num 3
+Name=Split 8
+Comment=Arrange existing windows in a 4x2 grid
+Exec=/home/ivan/github/DevToolbox/spilt_screens/split.sh --num 8
 Path=/home/ivan/github/DevToolbox/spilt_screens
 Icon=org.gnome.Ptyxis
 Terminal=false

@@ -1,11 +1,14 @@
 # Ubuntu X11 Window Split Tools
 
-这个目录提供六个面向 Ubuntu GNOME X11 的窗口平铺/聚焦/配置脚本：
+这个目录提供多个面向 Ubuntu GNOME X11 的窗口平铺/聚焦/配置脚本：
 
 - `split3.sh`: 将当前显示器上的窗口平铺为 1 到 3 列
-- `split6.sh`: 将当前显示器固定为 `3 列 x 2 行` 网格，并支持后台守护模式
+- `split.sh`: 统一入口，使用 `split --num 3|4|8|16` 整理当前已有窗口
+- `split4.sh`: 将当前显示器固定为 `2 列 x 2 行` 网格（4 个槽位）
 - `split6_recorded.sh`: 按 2026-03-14 当前桌面录制的 6 终端布局恢复窗口位置
-- `split16.sh`: 将当前显示器固定为 `4 列 x 3 行` 网格（最多 12 个槽位）
+- `split8.sh`: 将当前显示器固定为 `4 列 x 2 行` 网格（8 个槽位）
+- `split16.sh`: 将当前显示器固定为 `4 列 x 4 行` 网格（16 个槽位）
+- `launch_ptyxis_split.sh`: `split --open` 使用的 Ptyxis 启动实现
 - `focus_split6_slot.sh`: 聚焦六分屏中的某个槽位，并把鼠标移动到该槽位中心
 - `export_split6_hotkeys.sh`: 导出当前 `split6` 相关 GNOME 快捷键备份
 
@@ -37,13 +40,30 @@
 - 超过 6 个终端时，只移动最靠左的 6 个
 - 支持 `--dry-run` 和 `--verbose`
 
+### split8.sh
+
+- 使用固定 `4 x 2` 槽位布局（8 槽位）
+- 基于 `_NET_WORKAREA` 计算可用区域，自动避开 GNOME 顶栏和 Dock
+- 宽高余数会平均分配到各列/行，槽位只相差最多 1 像素
+- 内部边界留有轻微重叠，用来遮住终端字符网格尺寸导致的几像素缝隙
+- 8 个窗口时会覆盖整块当前显示器可用区域
+- 支持 `--daemon`、`--status`、`--stop`、`--dry-run`、`--verbose`
+
 ### split16.sh
 
-- 使用固定 `4 x 3` 槽位布局（12 槽位）
+- 使用固定 `4 x 4` 槽位布局（16 槽位）
 - 同样基于 `_NET_WORKAREA` 计算可用区域，尽量占满可用空间
 - 终端类窗口同样会按当前显示器尺寸自动换算列数和行数
-- 窗口不足 12 个时保留空槽位，不做拉伸填满
+- 窗口不足 16 个时保留空槽位，不做拉伸填满
 - 支持 `--daemon`、`--status`、`--stop`、`--dry-run`、`--verbose`
+
+### split.sh
+
+- 面向 Ubuntu 默认终端 Ptyxis
+- `split --num N` 默认只整理当前已有窗口，不新建窗口
+- 需要新开 Ptyxis 时，使用 `split --num N --open`
+- `--open` 支持 `--count N`、`--workdir DIR`、`--settle SECONDS`
+- 对 `4/8/16` 布局会先启动对应守护进程，让新窗口出现时自动补位
 
 ### focus_split6_slot.sh
 
@@ -81,24 +101,24 @@ sudo apt install -y xdotool x11-utils x11-xserver-utils
 - `xprop` 和 `xwininfo` 通常由 `x11-utils` 提供
 - `xrandr` 通常由 `x11-xserver-utils` 提供
 - Wayland 不受支持；如果 `XDG_SESSION_TYPE=wayland`，脚本会直接退出
+- `launch_ptyxis_split.sh` 额外需要 `ptyxis` 命令；当前 Flatpak wrapper `/home/ivan/.local/bin/ptyxis` 可用
 
 ## 快速开始
 
 进入目录并授予执行权限：
 
 ```bash
-cd /home/dgx/github/DevToolbox/spilt_screens
-chmod +x split3.sh split6.sh split6_recorded.sh focus_split6_slot.sh configure_split6_hotkeys.sh export_split6_hotkeys.sh
-chmod +x split16.sh
+cd /home/ivan/github/DevToolbox/spilt_screens
+chmod +x split.sh split3.sh split4.sh split8.sh split16.sh launch_ptyxis_split.sh configure_split6_hotkeys.sh
 ```
 
 直接运行：
 
 ```bash
-./split3.sh
-./split6.sh
-./split6_recorded.sh
-./split16.sh
+split --num 3
+split --num 4
+split --num 8
+split --num 16
 ```
 
 安装 Desktop 桌面启动器：
@@ -113,6 +133,7 @@ chmod +x split16.sh
 ./split3.sh --dry-run
 ./split6.sh --dry-run
 ./split6_recorded.sh --dry-run
+./split8.sh --dry-run
 ./split16.sh --dry-run
 ```
 
@@ -122,6 +143,7 @@ chmod +x split16.sh
 ./split3.sh --verbose
 ./split6.sh --verbose
 ./split6_recorded.sh --verbose
+./split8.sh --verbose
 ./split16.sh --verbose
 ```
 
@@ -223,6 +245,29 @@ chmod +x split16.sh
 - 会把录制时的布局按当前工作区比例做缩放
 - 如果终端超过 6 个，只移动最靠左的 6 个
 
+## split8.sh 用法
+
+命令：
+
+```bash
+./split8.sh [--daemon|--status|--stop] [--dry-run] [--verbose] [--help]
+```
+
+行为：
+
+- 固定使用 `4 列 x 2 行`
+- 最多填充 8 个槽位
+- 8 个窗口时会覆盖整块当前显示器可用区域
+- 守护模式会锁定启动时所在的显示器与工作区
+- 运行时状态目录：`~/.cache/split8`
+
+槽位编号：
+
+```text
+1 2 3 4
+5 6 7 8
+```
+
 ## split16.sh 用法
 
 命令：
@@ -304,35 +349,22 @@ gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings
 
 默认快捷键：
 
-- `Ctrl+Alt+0`：执行一次 4x3 分屏整理（`split16.sh`）
-- `Ctrl+Alt+Shift+6`：启动六分屏守护
-- `Ctrl+Alt+Shift+5`：停止六分屏守护
-- `Ctrl+Alt+1`：聚焦槽位 1
-- `Ctrl+Alt+2`：聚焦槽位 2
-- `Ctrl+Alt+3`：聚焦槽位 3
-- `Ctrl+Alt+4`：聚焦槽位 4
-- `Ctrl+Alt+5`：聚焦槽位 5
-- `Ctrl+Alt+6`：聚焦槽位 6
-- `Ctrl+Alt+7`：GNOME Terminal
-
-聚焦键按编号对应：
-
-```text
-1 2 3
-4 5 6
-```
+- `Ctrl+Alt+3`：`split --num 3`
+- `Ctrl+Alt+4`：`split --num 4`
+- `Ctrl+Alt+8`：`split --num 8`
+- `Ctrl+Alt+Shift+8`：`split --num 16`
 
 ## 安装到 PATH
 
-如果你希望直接使用 `split3`、`split6`、`split16`、`focus_split6_slot` 和 `export_split6_hotkeys` 命令：
+如果你希望直接使用 `split` 命令：
 
 ```bash
 mkdir -p ~/.local/bin
 ln -sf "$(pwd)/split3.sh" ~/.local/bin/split3
-ln -sf "$(pwd)/split6.sh" ~/.local/bin/split6
+ln -sf "$(pwd)/split4.sh" ~/.local/bin/split4
+ln -sf "$(pwd)/split8.sh" ~/.local/bin/split8
 ln -sf "$(pwd)/split16.sh" ~/.local/bin/split16
-ln -sf "$(pwd)/focus_split6_slot.sh" ~/.local/bin/focus_split6_slot
-ln -sf "$(pwd)/export_split6_hotkeys.sh" ~/.local/bin/export_split6_hotkeys
+ln -sf "$(pwd)/split.sh" ~/.local/bin/split
 ```
 
 确认 `~/.local/bin` 已在 `PATH` 中：

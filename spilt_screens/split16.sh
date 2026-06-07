@@ -13,9 +13,9 @@ readonly EXIT_MOVE_FAILED=3
 readonly EXIT_STATE=4
 readonly XDO_SETTLE_DELAY="0.05"
 readonly DAEMON_POLL_INTERVAL="0.6"
-readonly SLOT_COUNT=12
+readonly SLOT_COUNT=16
 readonly GRID_COLS=4
-readonly GRID_ROWS=3
+readonly GRID_ROWS=4
 readonly INNER_SEAM_OVERLAP_X=12
 readonly INNER_SEAM_OVERLAP_Y=12
 readonly STATE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/split16"
@@ -27,7 +27,7 @@ usage() {
   cat <<'EOF'
 Usage: split16.sh [--daemon|--status|--stop] [--dry-run] [--verbose] [--help]
 
-Arrange windows into a fixed 4x3 grid on the current monitor's usable work area.
+Arrange windows into a fixed 4x4 grid on the current monitor's usable work area.
 
 Options:
   --daemon    Start a background watcher that fills empty slots automatically
